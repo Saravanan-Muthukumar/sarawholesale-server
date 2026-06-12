@@ -25,10 +25,12 @@ const createToken = (user) => {
   );
 };
 
+const isProduction = process.env.NODE_ENV === "production";
+
 const cookieOptions = {
   httpOnly: true,
-  sameSite: "none",
-  secure: true,
+  sameSite: isProduction ? "none" : "lax",
+  secure: isProduction,
   path: "/",
   maxAge: 7 * 24 * 60 * 60 * 1000,
 };
@@ -438,8 +440,8 @@ router.put("/change-password", async (req, res) => {
 router.post("/logout", (req, res) => {
   res.clearCookie("token", {
     httpOnly: true,
-    sameSite: "none",
-    secure: true,
+    sameSite: isProduction ? "none" : "lax",
+    secure: isProduction,
     path: "/",
   });
 

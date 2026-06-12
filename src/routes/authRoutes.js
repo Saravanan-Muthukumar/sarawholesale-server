@@ -27,8 +27,9 @@ const createToken = (user) => {
 
 const cookieOptions = {
   httpOnly: true,
-  sameSite: "lax",
-  secure: false,
+  sameSite: "none",
+  secure: true,
+  path: "/",
   maxAge: 7 * 24 * 60 * 60 * 1000,
 };
 
@@ -435,7 +436,13 @@ router.put("/change-password", async (req, res) => {
 
 
 router.post("/logout", (req, res) => {
-  res.clearCookie("token");
+  res.clearCookie("token", {
+    httpOnly: true,
+    sameSite: "none",
+    secure: true,
+    path: "/",
+  });
+
   res.json({
     message: "Logged out",
   });

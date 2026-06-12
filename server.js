@@ -37,8 +37,8 @@ app.use(
   })
 );
 
-app.use(express.json());
 app.use(cookieParser());
+app.use(express.json());
 
 app.get("/", (req, res) => {
   res.send("SARA Wholesale Supplies API is working");

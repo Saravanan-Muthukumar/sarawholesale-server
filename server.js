@@ -17,8 +17,9 @@ const app = express();
 
 const allowedOrigins = [
   "http://localhost:5173",
-  "https://sarawholesalesupplies.co.uk",
-  "https://www.sarawholesalesupplies.co.uk",
+  "https://sarawholesale-client.vercel.app",
+  "https://sarawholesale.co.uk",
+  "https://www.sarawholesale.co.uk",
 ];
 
 app.use(

@@ -37,9 +37,9 @@ const cookieOptions = {
 
 router.post("/register", async (req, res) => {
   try {
-    const { full_name, business_name, email, phone, password } = req.body;
+    const { first_name, last_name, business_name, email, phone, password } = req.body;
 
-    if (!full_name || !email || !phone || !password) {
+      if (!first_name || !last_name || !email || !phone || !password) {
       return res.status(400).json({
         message: "Name, email, phone and password are required",
       });
@@ -64,7 +64,8 @@ router.post("/register", async (req, res) => {
         `
         UPDATE users
         SET
-          full_name = ?,
+          first_name = ?,
+          last_name = ?,
           business_name = ?,
           phone = ?,
           password_hash = ?,
@@ -73,7 +74,8 @@ router.post("/register", async (req, res) => {
         WHERE user_id = ?
         `,
         [
-          full_name,
+          first_name,
+          last_name,
           business_name || null,
           phone,
           password_hash,
@@ -94,21 +96,23 @@ router.post("/register", async (req, res) => {
     await db.query(
       `
       INSERT INTO users
-      (
-        full_name,
-        business_name,
-        email,
-        phone,
-        password_hash,
-        role,
-        email_verified,
-        email_verification_code,
-        email_verification_expires
-      )
-      VALUES (?, ?, ?, ?, ?, 'CUSTOMER', 0, ?, DATE_ADD(NOW(), INTERVAL 10 MINUTE))
+        (
+          first_name,
+          last_name,
+          business_name,
+          email,
+          phone,
+          password_hash,
+          role,
+          email_verified,
+          email_verification_code,
+          email_verification_expires
+        )
+        VALUES (?, ?, ?, ?, ?, ?, 'CUSTOMER', 0, ?, DATE_ADD(NOW(), INTERVAL 10 MINUTE))
       `,
       [
-        full_name,
+        first_name,
+        last_name,
         business_name || null,
         email,
         phone,
@@ -174,7 +178,7 @@ router.post("/verify-email", async (req, res) => {
       [user.user_id]
     );
 
-    await sendRegistrationSuccess(user.email, user.full_name);
+    await sendRegistrationSuccess(user.email, `${user.first_name} ${user.last_name}`);
 
     const token = createToken(user);
 
@@ -184,7 +188,9 @@ router.post("/verify-email", async (req, res) => {
       message: "Email verified successfully",
       user: {
         user_id: user.user_id,
-        full_name: user.full_name,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        full_name: `${user.first_name} ${user.last_name}`,
         business_name: user.business_name,
         email: user.email,
         phone: user.phone,
@@ -304,7 +310,9 @@ router.post("/login", async (req, res) => {
       message: "Login successful",
       user: {
         user_id: user.user_id,
-        full_name: user.full_name,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        full_name: `${user.first_name} ${user.last_name}`,
         business_name: user.business_name,
         email: user.email,
         phone: user.phone,
@@ -333,7 +341,15 @@ router.get("/me", async (req, res) => {
 
     const [rows] = await db.query(
       `
-      SELECT user_id, full_name, business_name, email, phone, role
+      SELECT
+      user_id,
+      first_name,
+      last_name,
+      CONCAT(first_name, ' ', last_name) AS full_name,
+      business_name,
+      email,
+      phone,
+      role
       FROM users
       WHERE user_id = ?
       AND is_active = 1

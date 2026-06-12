@@ -352,8 +352,10 @@ router.get("/me", async (req, res) => {
       user: rows[0],
     });
   } catch (error) {
+    console.error("AUTH ME ERROR:", error.message);
     res.status(401).json({
       message: "Invalid session",
+      error: error.message,
     });
   }
 });

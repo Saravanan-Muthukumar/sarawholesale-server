@@ -1,6 +1,10 @@
 const express = require("express");
 const router = express.Router();
-const nodemailer = require("nodemailer");
+
+const {
+  sendContactFormEmail,
+  sendContactAcknowledgementEmail,
+} = require("../utils/emailService");
 
 router.post("/", async (req, res) => {
   try {
@@ -18,42 +22,31 @@ router.post("/", async (req, res) => {
       });
     }
 
-    const toEmail = process.env.HOST_EMAIL || process.env.EMAIL_USER;
-
-    const transporter = nodemailer.createTransport({
-      host: process.env.EMAIL_HOST || "smtp.gmail.com",
-      port: Number(process.env.EMAIL_PORT) || 587,
-      secure: false,
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-      },
+    // Send enquiry email to SARA Wholesale Supplies
+    await sendContactFormEmail({
+      name,
+      email,
+      phone,
+      subject,
+      message,
     });
 
-    await transporter.sendMail({
-      from:
-        process.env.EMAIL_FROM ||
-        `"SARA Website" <${process.env.EMAIL_USER}>`,
-      to: toEmail,
-      replyTo: email,
-      subject: `New Contact Form: ${subject}`,
-      html: `
-        <h2>New Contact Enquiry</h2>
-        <p><strong>Name:</strong> ${name}</p>
-        <p><strong>Email:</strong> ${email}</p>
-        <p><strong>Phone:</strong> ${phone || "Not provided"}</p>
-        <p><strong>Subject:</strong> ${subject}</p>
-        <p><strong>Message:</strong></p>
-        <p>${message}</p>
-      `,
+    // Send acknowledgement email to customer
+    await sendContactAcknowledgementEmail({
+      name,
+      email,
+      subject,
     });
 
-    res.json({
+    return res.status(200).json({
+      success: true,
       message: "Message sent successfully",
     });
   } catch (err) {
     console.error("Contact form email error:", err);
-    res.status(500).json({
+
+    return res.status(500).json({
+      success: false,
       message: "Server error while sending message",
     });
   }

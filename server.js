@@ -53,6 +53,16 @@ app.use("/api/orders", orderRoutes);
 app.use("/uploads", express.static("uploads"));
 app.use("/api/contact", contactRoutes);
 
+app.use((req, res) => {
+  console.log("404 ROUTE NOT FOUND:", req.method, req.originalUrl);
+
+  res.status(404).json({
+    message: "Route not found",
+    method: req.method,
+    url: req.originalUrl,
+  });
+});
+
 const PORT = process.env.PORT || 9000;
 
 app.listen(PORT, () => {

@@ -2,17 +2,7 @@ const express = require("express");
 const router = express.Router();
 const db = require("../config/db");
 const requireAuth = require("../middleware/authMiddleware");
-const nodemailer = require("nodemailer");
-
-const HOST_EMAIL = process.env.HOST_EMAIL || process.env.EMAIL_USER;
-
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
+const { sendOrderRequestEmail } = require("../utils/emailService");
 
 async function getOrCreateActiveCart(user_id) {
   const [existingCart] = await db.query(
@@ -75,9 +65,7 @@ router.post("/add", requireAuth, async (req, res) => {
     const { product_id, quantity = 1, unit_price } = req.body;
 
     if (!product_id) {
-      return res.status(400).json({
-        message: "Product ID is required",
-      });
+      return res.status(400).json({ message: "Product ID is required" });
     }
 
     const user_id = req.user.user_id;
@@ -85,13 +73,7 @@ router.post("/add", requireAuth, async (req, res) => {
 
     await db.query(
       `
-      INSERT INTO cart_items
-      (
-        cart_id,
-        product_id,
-        quantity,
-        unit_price
-      )
+      INSERT INTO cart_items (cart_id, product_id, quantity, unit_price)
       VALUES (?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE
         quantity = quantity + VALUES(quantity),
@@ -100,27 +82,20 @@ router.post("/add", requireAuth, async (req, res) => {
       [cart_id, product_id, quantity, unit_price || null]
     );
 
-    res.status(201).json({
-      message: "Item added to cart",
-    });
+    res.status(201).json({ message: "Item added to cart" });
   } catch (error) {
     console.error("Add to cart error:", error);
-    res.status(500).json({
-      message: "Failed to add item to cart",
-    });
+    res.status(500).json({ message: "Failed to add item to cart" });
   }
 });
 
 router.get("/", requireAuth, async (req, res) => {
   try {
-    const user_id = req.user.user_id;
-    const rows = await getActiveCartItems(user_id);
+    const rows = await getActiveCartItems(req.user.user_id);
     res.json(rows);
   } catch (error) {
     console.error("Get cart error:", error);
-    res.status(500).json({
-      message: "Failed to load cart",
-    });
+    res.status(500).json({ message: "Failed to load cart" });
   }
 });
 
@@ -147,9 +122,7 @@ router.put("/update", requireAuth, async (req, res) => {
         [cart_item_id, user_id]
       );
 
-      return res.json({
-        message: "Item removed from cart",
-      });
+      return res.json({ message: "Item removed from cart" });
     }
 
     await db.query(
@@ -164,14 +137,10 @@ router.put("/update", requireAuth, async (req, res) => {
       [quantity, cart_item_id, user_id]
     );
 
-    res.json({
-      message: "Cart updated",
-    });
+    res.json({ message: "Cart updated" });
   } catch (error) {
     console.error("Update cart error:", error);
-    res.status(500).json({
-      message: "Failed to update cart",
-    });
+    res.status(500).json({ message: "Failed to update cart" });
   }
 });
 
@@ -191,14 +160,10 @@ router.delete("/item/:id", requireAuth, async (req, res) => {
       [cart_item_id, user_id]
     );
 
-    res.json({
-      message: "Item removed from cart",
-    });
+    res.json({ message: "Item removed from cart" });
   } catch (error) {
     console.error("Delete cart item error:", error);
-    res.status(500).json({
-      message: "Failed to remove cart item",
-    });
+    res.status(500).json({ message: "Failed to remove cart item" });
   }
 });
 
@@ -223,9 +188,7 @@ router.post("/request-order", requireAuth, async (req, res) => {
 
     if (!cartRows.length) {
       await connection.rollback();
-      return res.status(400).json({
-        message: "Cart is empty",
-      });
+      return res.status(400).json({ message: "Cart is empty" });
     }
 
     const cart_id = cartRows[0].cart_id;
@@ -248,15 +211,12 @@ router.post("/request-order", requireAuth, async (req, res) => {
 
     if (!items.length) {
       await connection.rollback();
-      return res.status(400).json({
-        message: "Cart is empty",
-      });
+      return res.status(400).json({ message: "Cart is empty" });
     }
 
-    const subtotal = items.reduce(
-      (sum, item) => sum + Number(item.quantity) * Number(item.unit_price || 0),
-      0
-    );
+    const subtotal = items.reduce((sum, item) => {
+      return sum + Number(item.quantity) * Number(item.unit_price || 0);
+    }, 0);
 
     const orderRequestNumber = `SOR-${Date.now()}`;
 
@@ -317,7 +277,7 @@ router.post("/request-order", requireAuth, async (req, res) => {
 
     const [userRows] = await db.query(
       `
-      SELECT full_name, email, phone
+      SELECT first_name, last_name, email, phone
       FROM users
       WHERE user_id = ?
       LIMIT 1
@@ -327,63 +287,29 @@ router.post("/request-order", requireAuth, async (req, res) => {
 
     const user = userRows[0];
 
-    const itemHtml = items
-      .map(
-        (item) => `
-        <tr>
-          <td>${item.product_name}</td>
-          <td>${item.sku || ""}</td>
-          <td>${item.quantity}</td>
-          <td>£${Number(item.unit_price || 0).toFixed(2)}</td>
-          <td>£${(Number(item.quantity) * Number(item.unit_price || 0)).toFixed(
-            2
-          )}</td>
-        </tr>
-      `
-      )
-      .join("");
-
-    const emailHtml = `
-      <h2>Order Request Submitted</h2>
-      <p><strong>Order Request No:</strong> ${orderRequestNumber}</p>
-      <p><strong>Customer:</strong> ${user?.full_name || ""}</p>
-      <p><strong>Email:</strong> ${user?.email || ""}</p>
-      <p><strong>Phone:</strong> ${user?.phone || ""}</p>
-
-      <table border="1" cellpadding="8" cellspacing="0">
-        <thead>
-          <tr>
-            <th>Product</th>
-            <th>SKU</th>
-            <th>Qty</th>
-            <th>Unit Price</th>
-            <th>Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${itemHtml}
-        </tbody>
-      </table>
-
-      <h3>Subtotal: £${subtotal.toFixed(2)}</h3>
-      <p>Status: REQUEST SUBMITTED</p>
-    `;
+    const customerName = `${user?.first_name || ""} ${
+      user?.last_name || ""
+    }`.trim();
 
     if (user?.email) {
-      await transporter.sendMail({
-        from: process.env.EMAIL_USER,
-        to: user.email,
-        subject: `Order Request Submitted - ${orderRequestNumber}`,
-        html: emailHtml,
+      await sendOrderRequestEmail({
+        email: user.email,
+        customerName,
+        customerPhone: user.phone,
+        orderRequestNumber,
+        subtotal,
+        items,
       });
     }
 
-    if (HOST_EMAIL) {
-      await transporter.sendMail({
-        from: process.env.EMAIL_USER,
-        to: HOST_EMAIL,
-        subject: `New Order Request - ${orderRequestNumber}`,
-        html: emailHtml,
+    if (process.env.HOST_EMAIL) {
+      await sendOrderRequestEmail({
+        email: process.env.HOST_EMAIL,
+        customerName,
+        customerPhone: user?.phone,
+        orderRequestNumber,
+        subtotal,
+        items,
       });
     }
 

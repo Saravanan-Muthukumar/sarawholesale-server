@@ -2,10 +2,16 @@ const express = require("express");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const db = require("../config/db");
+const crypto = require("crypto");
+
 const {
   sendVerificationCode,
   sendRegistrationSuccess,
 } = require("../utils/emailService");
+
+const {
+  sendResetPasswordEmail,
+} = require("../utils/emailServiceResetPassword");
 
 const router = express.Router();
 
@@ -37,9 +43,16 @@ const cookieOptions = {
 
 router.post("/register", async (req, res) => {
   try {
-    const { first_name, last_name, business_name, email, phone, password } = req.body;
+    const {
+      first_name,
+      last_name,
+      business_name,
+      email,
+      phone,
+      password,
+    } = req.body;
 
-      if (!first_name || !last_name || !email || !phone || !password) {
+    if (!first_name || !last_name || !email || !phone || !password) {
       return res.status(400).json({
         message: "Name, email, phone and password are required",
       });
@@ -96,19 +109,19 @@ router.post("/register", async (req, res) => {
     await db.query(
       `
       INSERT INTO users
-        (
-          first_name,
-          last_name,
-          business_name,
-          email,
-          phone,
-          password_hash,
-          role,
-          email_verified,
-          email_verification_code,
-          email_verification_expires
-        )
-        VALUES (?, ?, ?, ?, ?, ?, 'CUSTOMER', 0, ?, DATE_ADD(NOW(), INTERVAL 10 MINUTE))
+      (
+        first_name,
+        last_name,
+        business_name,
+        email,
+        phone,
+        password_hash,
+        role,
+        email_verified,
+        email_verification_code,
+        email_verification_expires
+      )
+      VALUES (?, ?, ?, ?, ?, ?, 'CUSTOMER', 0, ?, DATE_ADD(NOW(), INTERVAL 10 MINUTE))
       `,
       [
         first_name,
@@ -129,7 +142,7 @@ router.post("/register", async (req, res) => {
       requiresVerification: true,
     });
   } catch (error) {
-    console.error(error);
+    console.error("Register error:", error);
     res.status(500).json({
       message: "Registration failed",
     });
@@ -178,7 +191,10 @@ router.post("/verify-email", async (req, res) => {
       [user.user_id]
     );
 
-    await sendRegistrationSuccess(user.email, `${user.first_name} ${user.last_name}`);
+    await sendRegistrationSuccess(
+      user.email,
+      `${user.first_name} ${user.last_name}`.trim()
+    );
 
     const token = createToken(user);
 
@@ -190,7 +206,7 @@ router.post("/verify-email", async (req, res) => {
         user_id: user.user_id,
         first_name: user.first_name,
         last_name: user.last_name,
-        full_name: `${user.first_name} ${user.last_name}`,
+        full_name: `${user.first_name} ${user.last_name}`.trim(),
         business_name: user.business_name,
         email: user.email,
         phone: user.phone,
@@ -198,7 +214,7 @@ router.post("/verify-email", async (req, res) => {
       },
     });
   } catch (error) {
-    console.error(error);
+    console.error("Verify email error:", error);
     res.status(500).json({
       message: "Email verification failed",
     });
@@ -256,7 +272,7 @@ router.post("/resend-code", async (req, res) => {
       message: "Verification code resent",
     });
   } catch (error) {
-    console.error(error);
+    console.error("Resend code error:", error);
     res.status(500).json({
       message: "Failed to resend verification code",
     });
@@ -312,7 +328,7 @@ router.post("/login", async (req, res) => {
         user_id: user.user_id,
         first_name: user.first_name,
         last_name: user.last_name,
-        full_name: `${user.first_name} ${user.last_name}`,
+        full_name: `${user.first_name} ${user.last_name}`.trim(),
         business_name: user.business_name,
         email: user.email,
         phone: user.phone,
@@ -320,7 +336,7 @@ router.post("/login", async (req, res) => {
       },
     });
   } catch (error) {
-    console.error(error);
+    console.error("Login error:", error);
     res.status(500).json({
       message: "Login failed",
     });
@@ -342,14 +358,14 @@ router.get("/me", async (req, res) => {
     const [rows] = await db.query(
       `
       SELECT
-      user_id,
-      first_name,
-      last_name,
-      CONCAT(first_name, ' ', last_name) AS full_name,
-      business_name,
-      email,
-      phone,
-      role
+        user_id,
+        first_name,
+        last_name,
+        CONCAT(first_name, ' ', last_name) AS full_name,
+        business_name,
+        email,
+        phone,
+        role
       FROM users
       WHERE user_id = ?
       AND is_active = 1
@@ -454,6 +470,155 @@ router.put("/change-password", async (req, res) => {
   }
 });
 
+router.post("/forgot-password", async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        message: "Email is required",
+      });
+    }
+
+    const [users] = await db.query(
+      `
+      SELECT user_id, email, first_name, last_name
+      FROM users
+      WHERE email = ?
+      AND is_active = 1
+      LIMIT 1
+      `,
+      [email]
+    );
+
+    if (!users.length) {
+      return res.json({
+        message: "Password reset email sent. Please check your inbox.",
+      });
+    }
+
+    const user = users[0];
+
+    const rawToken = crypto.randomBytes(32).toString("hex");
+
+    const hashedToken = crypto
+      .createHash("sha256")
+      .update(rawToken)
+      .digest("hex");
+
+    await db.query(
+      `
+      DELETE FROM password_resets
+      WHERE user_id = ?
+      `,
+      [user.user_id]
+    );
+
+    await db.query(
+      `
+      INSERT INTO password_resets
+      (
+        user_id,
+        token,
+        expires_at
+      )
+      VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 30 MINUTE))
+      `,
+      [user.user_id, hashedToken]
+    );
+
+    const resetLink = `${process.env.CLIENT_URL}/reset-password/${rawToken}`;
+
+    const customerName = `${user.first_name || ""} ${
+      user.last_name || ""
+    }`.trim();
+
+    await sendResetPasswordEmail({
+      email: user.email,
+      name: customerName,
+      resetLink,
+    });
+
+    res.json({
+      message: "Password reset email sent. Please check your inbox.",
+    });
+  } catch (error) {
+    console.error("Forgot password error:", error);
+    res.status(500).json({
+      message: "Failed to send reset email",
+    });
+  }
+});
+
+router.post("/reset-password", async (req, res) => {
+  try {
+    const { token, password } = req.body;
+
+    if (!token || !password) {
+      return res.status(400).json({
+        message: "Token and password are required",
+      });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({
+        message: "Password must be at least 6 characters",
+      });
+    }
+
+    const hashedToken = crypto
+      .createHash("sha256")
+      .update(token)
+      .digest("hex");
+
+    const [rows] = await db.query(
+      `
+      SELECT *
+      FROM password_resets
+      WHERE token = ?
+      AND expires_at > NOW()
+      LIMIT 1
+      `,
+      [hashedToken]
+    );
+
+    if (!rows.length) {
+      return res.status(400).json({
+        message: "Invalid or expired reset link",
+      });
+    }
+
+    const reset = rows[0];
+
+    const password_hash = await bcrypt.hash(password, 10);
+
+    await db.query(
+      `
+      UPDATE users
+      SET password_hash = ?
+      WHERE user_id = ?
+      `,
+      [password_hash, reset.user_id]
+    );
+
+    await db.query(
+      `
+      DELETE FROM password_resets
+      WHERE user_id = ?
+      `,
+      [reset.user_id]
+    );
+
+    res.json({
+      message: "Password reset successful",
+    });
+  } catch (error) {
+    console.error("Reset password error:", error);
+    res.status(500).json({
+      message: "Password reset failed",
+    });
+  }
+});
 
 router.post("/logout", (req, res) => {
   res.clearCookie("token", {

@@ -320,7 +320,14 @@ router.post("/login", async (req, res) => {
 
     const token = createToken(user);
 
+    console.log("========== LOGIN SUCCESS ==========");
+    console.log("Email:", email);
+    console.log("Origin:", req.headers.origin);
+    console.log("User-Agent:", req.headers["user-agent"]);
+
     res.cookie("token", token, cookieOptions);
+
+    console.log("COOKIE OPTIONS:", cookieOptions);
 
     res.json({
       message: "Login successful",
@@ -341,6 +348,16 @@ router.post("/login", async (req, res) => {
       message: "Login failed",
     });
   }
+});
+
+router.get("/test-cookie", (req, res) => {
+  console.log("========== TEST COOKIE ==========");
+  console.log("Cookies:", req.cookies);
+
+  res.json({
+    cookies: req.cookies,
+    hasToken: !!req.cookies.token,
+  });
 });
 
 router.get("/me", async (req, res) => {

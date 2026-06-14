@@ -35,8 +35,8 @@ const isProduction = process.env.NODE_ENV === "production";
 
 const cookieOptions = {
   httpOnly: true,
-  sameSite: isProduction ? "none" : "lax",
-  secure: isProduction,
+  sameSite: "none",
+  secure: true,
   path: "/",
   maxAge: 7 * 24 * 60 * 60 * 1000,
 };
@@ -623,8 +623,8 @@ router.post("/reset-password", async (req, res) => {
 router.post("/logout", (req, res) => {
   res.clearCookie("token", {
     httpOnly: true,
-    sameSite: isProduction ? "none" : "lax",
-    secure: isProduction,
+    sameSite: "none",
+    secure: true,
     path: "/",
   });
 

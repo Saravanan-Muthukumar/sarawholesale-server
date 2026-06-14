@@ -61,6 +61,9 @@ async function getActiveCartItems(user_id) {
 }
 
 router.post("/add", requireAuth, async (req, res) => {
+  console.log("========== ADD TO CART ==========");
+  console.log("User:", req.user);
+  console.log("Body:", req.body);
   try {
     const { product_id, quantity = 1, unit_price } = req.body;
 

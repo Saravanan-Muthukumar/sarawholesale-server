@@ -2,27 +2,14 @@ const express = require("express");
 const router = express.Router();
 const db = require("../config/db");
 const multer = require("multer");
-const path = require("path");
 const requireAuth = require("../middleware/requireAuth");
 const requireAdmin = require("../middleware/requireAdmin");
+const uploadToSpaces = require("../services/spaces");
 
-// image upload setup
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, "uploads/categories");
-  },
-  filename: (req, file, cb) => {
-    const uniqueName =
-      Date.now() +
-      "-" +
-      Math.round(Math.random() * 1e9) +
-      path.extname(file.originalname);
-
-    cb(null, uniqueName);
-  },
+// Upload image to memory first, then send to DigitalOcean Spaces
+const upload = multer({
+  storage: multer.memoryStorage(),
 });
-
-const upload = multer({ storage });
 
 // GET active categories - public
 router.get("/", async (req, res) => {
@@ -77,12 +64,7 @@ router.post(
   upload.single("image"),
   async (req, res) => {
     try {
-      const {
-        category_name,
-        slug,
-        parent_category_id,
-        is_active = 1,
-      } = req.body;
+      const { category_name, slug, parent_category_id, is_active = 1 } = req.body;
 
       if (!category_name || !slug) {
         return res.status(400).json({
@@ -91,7 +73,7 @@ router.post(
       }
 
       const imageUrl = req.file
-        ? `/uploads/categories/${req.file.filename}`
+        ? await uploadToSpaces(req.file, "categories")
         : null;
 
       const [result] = await db.query(
@@ -106,13 +88,7 @@ router.post(
         )
         VALUES (?, ?, ?, ?, ?)
         `,
-        [
-          category_name,
-          slug,
-          parent_category_id || null,
-          imageUrl,
-          is_active,
-        ]
+        [category_name, slug, parent_category_id || null, imageUrl, is_active]
       );
 
       res.status(201).json({
@@ -120,6 +96,8 @@ router.post(
         category_id: result.insertId,
       });
     } catch (error) {
+      console.error(error);
+
       if (error.code === "ER_DUP_ENTRY") {
         return res.status(409).json({
           message: "Category slug already exists",
@@ -144,12 +122,7 @@ router.put(
     try {
       const { category_id } = req.params;
 
-      const {
-        category_name,
-        slug,
-        parent_category_id,
-        is_active = 1,
-      } = req.body;
+      const { category_name, slug, parent_category_id, is_active = 1 } = req.body;
 
       if (!category_name || !slug) {
         return res.status(400).json({
@@ -163,10 +136,8 @@ router.put(
         });
       }
 
-      let imageUrl = null;
-
       if (req.file) {
-        imageUrl = `/uploads/categories/${req.file.filename}`;
+        const imageUrl = await uploadToSpaces(req.file, "categories");
 
         await db.query(
           `
@@ -199,13 +170,7 @@ router.put(
             is_active = ?
           WHERE category_id = ?
           `,
-          [
-            category_name,
-            slug,
-            parent_category_id || null,
-            is_active,
-            category_id,
-          ]
+          [category_name, slug, parent_category_id || null, is_active, category_id]
         );
       }
 
@@ -213,6 +178,8 @@ router.put(
         message: "Category updated successfully",
       });
     } catch (error) {
+      console.error(error);
+
       if (error.code === "ER_DUP_ENTRY") {
         return res.status(409).json({
           message: "Category slug already exists",
@@ -261,6 +228,8 @@ router.delete("/:category_id", requireAuth, requireAdmin, async (req, res) => {
       message: "Category deleted successfully",
     });
   } catch (error) {
+    console.error(error);
+
     res.status(500).json({
       success: false,
       message: error.message,

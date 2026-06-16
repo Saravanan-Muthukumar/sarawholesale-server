@@ -2,27 +2,14 @@ const express = require("express");
 const router = express.Router();
 const db = require("../config/db");
 const multer = require("multer");
-const path = require("path");
 const requireAuth = require("../middleware/requireAuth");
 const requireAdmin = require("../middleware/requireAdmin");
+const uploadToSpaces = require("../services/spaces");
 
-// image upload setup
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, "uploads/products");
-  },
-  filename: (req, file, cb) => {
-    const uniqueName =
-      Date.now() +
-      "-" +
-      Math.round(Math.random() * 1e9) +
-      path.extname(file.originalname);
-
-    cb(null, uniqueName);
-  },
+// Upload image to memory first, then send to DigitalOcean Spaces
+const upload = multer({
+  storage: multer.memoryStorage(),
 });
-
-const upload = multer({ storage });
 
 const attachPrices = async (products) => {
   if (!products.length) return products;
@@ -185,120 +172,121 @@ router.post(
   requireAdmin,
   upload.single("image"),
   async (req, res) => {
-  const connection = await db.getConnection();
+    const connection = await db.getConnection();
 
-  try {
-    await connection.beginTransaction();
+    try {
+      await connection.beginTransaction();
 
-    const {
-      category_id,
-      sku,
-      product_name,
-      slug,
-      description,
-      is_active = 1,
-      price_breaks,
-    } = req.body;
-
-    if (!category_id || !product_name || !slug) {
-      await connection.rollback();
-      return res.status(400).json({
-        message: "Category, product name and slug are required",
-      });
-    }
-
-    const parsedPrices = parsePriceBreaks(price_breaks);
-
-    if (!parsedPrices.length) {
-      await connection.rollback();
-      return res.status(400).json({
-        message: "At least one price slab is required",
-      });
-    }
-
-    const [result] = await connection.query(
-      `
-      INSERT INTO products
-      (
+      const {
         category_id,
         sku,
         product_name,
         slug,
         description,
-        is_active
-      )
-      VALUES (?, ?, ?, ?, ?, ?)
-      `,
-      [
-        category_id,
-        sku || null,
-        product_name,
-        slug,
-        description || null,
-        is_active,
-      ]
-    );
+        is_active = 1,
+        price_breaks,
+      } = req.body;
 
-    const product_id = result.insertId;
+      if (!category_id || !product_name || !slug) {
+        await connection.rollback();
+        return res.status(400).json({
+          message: "Category, product name and slug are required",
+        });
+      }
 
-    for (const price of parsedPrices) {
-      await connection.query(
+      const parsedPrices = parsePriceBreaks(price_breaks);
+
+      if (!parsedPrices.length) {
+        await connection.rollback();
+        return res.status(400).json({
+          message: "At least one price slab is required",
+        });
+      }
+
+      const [result] = await connection.query(
         `
-        INSERT INTO product_prices
+        INSERT INTO products
         (
-          product_id,
-          min_qty,
-          max_qty,
-          price
+          category_id,
+          sku,
+          product_name,
+          slug,
+          description,
+          is_active
         )
-        VALUES (?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?)
         `,
-        [product_id, price.min_qty, price.max_qty, price.price]
+        [
+          category_id,
+          sku || null,
+          product_name,
+          slug,
+          description || null,
+          is_active,
+        ]
       );
-    }
 
-    if (req.file) {
-      const imageUrl = `/uploads/products/${req.file.filename}`;
+      const product_id = result.insertId;
 
-      await connection.query(
-        `
-        INSERT INTO product_images
-        (
-          product_id,
-          image_url,
-          alt_text,
-          is_main,
-          sort_order
-        )
-        VALUES (?, ?, ?, 1, 0)
-        `,
-        [product_id, imageUrl, product_name]
-      );
-    }
+      for (const price of parsedPrices) {
+        await connection.query(
+          `
+          INSERT INTO product_prices
+          (
+            product_id,
+            min_qty,
+            max_qty,
+            price
+          )
+          VALUES (?, ?, ?, ?)
+          `,
+          [product_id, price.min_qty, price.max_qty, price.price]
+        );
+      }
 
-    await connection.commit();
+      if (req.file) {
+        const imageUrl = await uploadToSpaces(req.file, "products");
 
-    res.status(201).json({
-      message: "Product added successfully",
-      product_id,
-    });
-  } catch (error) {
-    await connection.rollback();
-    console.error(error);
+        await connection.query(
+          `
+          INSERT INTO product_images
+          (
+            product_id,
+            image_url,
+            alt_text,
+            is_main,
+            sort_order
+          )
+          VALUES (?, ?, ?, 1, 0)
+          `,
+          [product_id, imageUrl, product_name]
+        );
+      }
 
-    if (error.code === "ER_DUP_ENTRY") {
-      return res.status(409).json({
-        message: "Product slug or SKU already exists",
+      await connection.commit();
+
+      res.status(201).json({
+        message: "Product added successfully",
+        product_id,
       });
-    }
+    } catch (error) {
+      await connection.rollback();
+      console.error(error);
 
-    res.status(500).json({
-      message: "Failed to add product",
-    });
-  } finally {
-    connection.release();
+      if (error.code === "ER_DUP_ENTRY") {
+        return res.status(409).json({
+          message: "Product slug or SKU already exists",
+        });
+      }
+
+      res.status(500).json({
+        message: "Failed to add product",
+      });
+    } finally {
+      connection.release();
+    }
   }
-});
+);
 
 // EDIT product
 router.put(
@@ -307,136 +295,137 @@ router.put(
   requireAdmin,
   upload.single("image"),
   async (req, res) => {
-  const connection = await db.getConnection();
+    const connection = await db.getConnection();
 
-  try {
-    await connection.beginTransaction();
+    try {
+      await connection.beginTransaction();
 
-    const { product_id } = req.params;
+      const { product_id } = req.params;
 
-    const {
-      category_id,
-      sku,
-      product_name,
-      slug,
-      description,
-      is_active = 1,
-      price_breaks,
-    } = req.body;
-
-    if (!category_id || !product_name || !slug) {
-      await connection.rollback();
-      return res.status(400).json({
-        message: "Category, product name and slug are required",
-      });
-    }
-
-    const parsedPrices = parsePriceBreaks(price_breaks);
-
-    if (!parsedPrices.length) {
-      await connection.rollback();
-      return res.status(400).json({
-        message: "At least one price slab is required",
-      });
-    }
-
-    await connection.query(
-      `
-      UPDATE products
-      SET
-        category_id = ?,
-        sku = ?,
-        product_name = ?,
-        slug = ?,
-        description = ?,
-        is_active = ?
-      WHERE product_id = ?
-      `,
-      [
+      const {
         category_id,
-        sku || null,
+        sku,
         product_name,
         slug,
-        description || null,
-        is_active,
-        product_id,
-      ]
-    );
+        description,
+        is_active = 1,
+        price_breaks,
+      } = req.body;
 
-    await connection.query(
-      `
-      DELETE FROM product_prices
-      WHERE product_id = ?
-      `,
-      [product_id]
-    );
+      if (!category_id || !product_name || !slug) {
+        await connection.rollback();
+        return res.status(400).json({
+          message: "Category, product name and slug are required",
+        });
+      }
 
-    for (const price of parsedPrices) {
+      const parsedPrices = parsePriceBreaks(price_breaks);
+
+      if (!parsedPrices.length) {
+        await connection.rollback();
+        return res.status(400).json({
+          message: "At least one price slab is required",
+        });
+      }
+
       await connection.query(
         `
-        INSERT INTO product_prices
-        (
-          product_id,
-          min_qty,
-          max_qty,
-          price
-        )
-        VALUES (?, ?, ?, ?)
+        UPDATE products
+        SET
+          category_id = ?,
+          sku = ?,
+          product_name = ?,
+          slug = ?,
+          description = ?,
+          is_active = ?
+        WHERE product_id = ?
         `,
-        [product_id, price.min_qty, price.max_qty, price.price]
+        [
+          category_id,
+          sku || null,
+          product_name,
+          slug,
+          description || null,
+          is_active,
+          product_id,
+        ]
       );
-    }
-
-    if (req.file) {
-      const imageUrl = `/uploads/products/${req.file.filename}`;
 
       await connection.query(
         `
-        UPDATE product_images
-        SET is_main = 0
+        DELETE FROM product_prices
         WHERE product_id = ?
         `,
         [product_id]
       );
 
-      await connection.query(
-        `
-        INSERT INTO product_images
-        (
-          product_id,
-          image_url,
-          alt_text,
-          is_main,
-          sort_order
-        )
-        VALUES (?, ?, ?, 1, 0)
-        `,
-        [product_id, imageUrl, product_name]
-      );
-    }
+      for (const price of parsedPrices) {
+        await connection.query(
+          `
+          INSERT INTO product_prices
+          (
+            product_id,
+            min_qty,
+            max_qty,
+            price
+          )
+          VALUES (?, ?, ?, ?)
+          `,
+          [product_id, price.min_qty, price.max_qty, price.price]
+        );
+      }
 
-    await connection.commit();
+      if (req.file) {
+        const imageUrl = await uploadToSpaces(req.file, "products");
 
-    res.json({
-      message: "Product updated successfully",
-    });
-  } catch (error) {
-    await connection.rollback();
-    console.error(error);
+        await connection.query(
+          `
+          UPDATE product_images
+          SET is_main = 0
+          WHERE product_id = ?
+          `,
+          [product_id]
+        );
 
-    if (error.code === "ER_DUP_ENTRY") {
-      return res.status(409).json({
-        message: "Product slug or SKU already exists",
+        await connection.query(
+          `
+          INSERT INTO product_images
+          (
+            product_id,
+            image_url,
+            alt_text,
+            is_main,
+            sort_order
+          )
+          VALUES (?, ?, ?, 1, 0)
+          `,
+          [product_id, imageUrl, product_name]
+        );
+      }
+
+      await connection.commit();
+
+      res.json({
+        message: "Product updated successfully",
       });
-    }
+    } catch (error) {
+      await connection.rollback();
+      console.error(error);
 
-    res.status(500).json({
-      message: "Failed to update product",
-    });
-  } finally {
-    connection.release();
+      if (error.code === "ER_DUP_ENTRY") {
+        return res.status(409).json({
+          message: "Product slug or SKU already exists",
+        });
+      }
+
+      res.status(500).json({
+        message: "Failed to update product",
+      });
+    } finally {
+      connection.release();
+    }
   }
-});
+);
 
 // DELETE product - soft delete
 router.delete(
@@ -444,27 +433,28 @@ router.delete(
   requireAuth,
   requireAdmin,
   async (req, res) => {
-  try {
-    const { product_id } = req.params;
+    try {
+      const { product_id } = req.params;
 
-    await db.query(
-      `
-      UPDATE products
-      SET is_active = 0
-      WHERE product_id = ?
-      `,
-      [product_id]
-    );
+      await db.query(
+        `
+        UPDATE products
+        SET is_active = 0
+        WHERE product_id = ?
+        `,
+        [product_id]
+      );
 
-    res.json({
-      message: "Product deleted successfully",
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({
-      message: "Failed to delete product",
-    });
+      res.json({
+        message: "Product deleted successfully",
+      });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({
+        message: "Failed to delete product",
+      });
+    }
   }
-});
+);
 
 module.exports = router;

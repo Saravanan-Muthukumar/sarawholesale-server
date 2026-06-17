@@ -6,7 +6,6 @@ const requireAuth = require("../middleware/requireAuth");
 const requireAdmin = require("../middleware/requireAdmin");
 const uploadToSpaces = require("../services/spaces");
 
-// Upload image to memory first, then send to DigitalOcean Spaces
 const upload = multer({
   storage: multer.memoryStorage(),
 });
@@ -18,12 +17,7 @@ const attachPrices = async (products) => {
 
   const [prices] = await db.query(
     `
-    SELECT
-      price_id,
-      product_id,
-      min_qty,
-      max_qty,
-      price
+    SELECT price_id, product_id, min_qty, max_qty, price
     FROM product_prices
     WHERE product_id IN (?)
     ORDER BY product_id, min_qty
@@ -35,6 +29,40 @@ const attachPrices = async (products) => {
     ...product,
     price_breaks: prices.filter(
       (price) => price.product_id === product.product_id
+    ),
+  }));
+};
+
+const attachImagesAndSpecs = async (products) => {
+  if (!products.length) return products;
+
+  const productIds = products.map((p) => p.product_id);
+
+  const [images] = await db.query(
+    `
+    SELECT image_id, product_id, image_url, alt_text, is_main, sort_order
+    FROM product_images
+    WHERE product_id IN (?)
+    ORDER BY product_id, is_main DESC, sort_order ASC, image_id ASC
+    `,
+    [productIds]
+  );
+
+  const [specs] = await db.query(
+    `
+    SELECT spec_id, product_id, spec_name, spec_value, sort_order
+    FROM product_specifications
+    WHERE product_id IN (?)
+    ORDER BY product_id, sort_order ASC, spec_id ASC
+    `,
+    [productIds]
+  );
+
+  return products.map((product) => ({
+    ...product,
+    images: images.filter((img) => img.product_id === product.product_id),
+    specifications: specs.filter(
+      (spec) => spec.product_id === product.product_id
     ),
   }));
 };
@@ -60,6 +88,32 @@ const parsePriceBreaks = (priceBreaksRaw) => {
   }
 };
 
+const parseSpecifications = (specificationsRaw) => {
+  try {
+    const specs =
+      typeof specificationsRaw === "string"
+        ? JSON.parse(specificationsRaw || "[]")
+        : specificationsRaw || [];
+
+    if (!Array.isArray(specs)) return [];
+
+    return specs
+      .filter((item) => item.spec_name && item.spec_value)
+      .map((item, index) => ({
+        spec_name: String(item.spec_name).trim(),
+        spec_value: String(item.spec_value).trim(),
+        sort_order: index,
+      }));
+  } catch {
+    return [];
+  }
+};
+
+const loadFullProducts = async (rows) => {
+  const withPrices = await attachPrices(rows);
+  return attachImagesAndSpecs(withPrices);
+};
+
 // GET all products
 router.get("/", async (req, res) => {
   try {
@@ -70,8 +124,7 @@ router.get("/", async (req, res) => {
         c.slug AS category_slug,
         pi.image_url
       FROM products p
-      INNER JOIN categories c
-        ON c.category_id = p.category_id
+      INNER JOIN categories c ON c.category_id = p.category_id
       LEFT JOIN product_images pi
         ON pi.product_id = p.product_id
         AND pi.is_main = 1
@@ -79,13 +132,11 @@ router.get("/", async (req, res) => {
       ORDER BY c.category_name, p.product_name
     `);
 
-    const products = await attachPrices(rows);
+    const products = await loadFullProducts(rows);
     res.json(products);
   } catch (error) {
     console.error(error);
-    res.status(500).json({
-      message: "Failed to load products",
-    });
+    res.status(500).json({ message: "Failed to load products" });
   }
 });
 
@@ -102,8 +153,7 @@ router.get("/category/:slug", async (req, res) => {
         c.slug AS category_slug,
         pi.image_url
       FROM products p
-      INNER JOIN categories c
-        ON c.category_id = p.category_id
+      INNER JOIN categories c ON c.category_id = p.category_id
       LEFT JOIN product_images pi
         ON pi.product_id = p.product_id
         AND pi.is_main = 1
@@ -114,13 +164,11 @@ router.get("/category/:slug", async (req, res) => {
       [slug]
     );
 
-    const products = await attachPrices(rows);
+    const products = await loadFullProducts(rows);
     res.json(products);
   } catch (error) {
     console.error(error);
-    res.status(500).json({
-      message: "Failed to load products",
-    });
+    res.status(500).json({ message: "Failed to load products" });
   }
 });
 
@@ -137,8 +185,7 @@ router.get("/:slug", async (req, res) => {
         c.slug AS category_slug,
         pi.image_url
       FROM products p
-      INNER JOIN categories c
-        ON c.category_id = p.category_id
+      INNER JOIN categories c ON c.category_id = p.category_id
       LEFT JOIN product_images pi
         ON pi.product_id = p.product_id
         AND pi.is_main = 1
@@ -150,18 +197,14 @@ router.get("/:slug", async (req, res) => {
     );
 
     if (!rows.length) {
-      return res.status(404).json({
-        message: "Product not found",
-      });
+      return res.status(404).json({ message: "Product not found" });
     }
 
-    const [product] = await attachPrices(rows);
-    res.json(product);
+    const products = await loadFullProducts(rows);
+    res.json(products[0]);
   } catch (error) {
     console.error(error);
-    res.status(500).json({
-      message: "Failed to load product",
-    });
+    res.status(500).json({ message: "Failed to load product" });
   }
 });
 
@@ -170,7 +213,7 @@ router.post(
   "/",
   requireAuth,
   requireAdmin,
-  upload.single("image"),
+  upload.array("images", 8),
   async (req, res) => {
     const connection = await db.getConnection();
 
@@ -185,6 +228,7 @@ router.post(
         description,
         is_active = 1,
         price_breaks,
+        specifications,
       } = req.body;
 
       if (!category_id || !product_name || !slug) {
@@ -195,6 +239,7 @@ router.post(
       }
 
       const parsedPrices = parsePriceBreaks(price_breaks);
+      const parsedSpecs = parseSpecifications(specifications);
 
       if (!parsedPrices.length) {
         await connection.rollback();
@@ -206,14 +251,7 @@ router.post(
       const [result] = await connection.query(
         `
         INSERT INTO products
-        (
-          category_id,
-          sku,
-          product_name,
-          slug,
-          description,
-          is_active
-        )
+        (category_id, sku, product_name, slug, description, is_active)
         VALUES (?, ?, ?, ?, ?, ?)
         `,
         [
@@ -232,35 +270,37 @@ router.post(
         await connection.query(
           `
           INSERT INTO product_prices
-          (
-            product_id,
-            min_qty,
-            max_qty,
-            price
-          )
+          (product_id, min_qty, max_qty, price)
           VALUES (?, ?, ?, ?)
           `,
           [product_id, price.min_qty, price.max_qty, price.price]
         );
       }
 
-      if (req.file) {
-        const imageUrl = await uploadToSpaces(req.file, "products");
-
+      for (const spec of parsedSpecs) {
         await connection.query(
           `
-          INSERT INTO product_images
-          (
-            product_id,
-            image_url,
-            alt_text,
-            is_main,
-            sort_order
-          )
-          VALUES (?, ?, ?, 1, 0)
+          INSERT INTO product_specifications
+          (product_id, spec_name, spec_value, sort_order)
+          VALUES (?, ?, ?, ?)
           `,
-          [product_id, imageUrl, product_name]
+          [product_id, spec.spec_name, spec.spec_value, spec.sort_order]
         );
+      }
+
+      if (req.files && req.files.length) {
+        for (let i = 0; i < req.files.length; i++) {
+          const imageUrl = await uploadToSpaces(req.files[i], "products");
+
+          await connection.query(
+            `
+            INSERT INTO product_images
+            (product_id, image_url, alt_text, is_main, sort_order)
+            VALUES (?, ?, ?, ?, ?)
+            `,
+            [product_id, imageUrl, product_name, i === 0 ? 1 : 0, i]
+          );
+        }
       }
 
       await connection.commit();
@@ -279,9 +319,7 @@ router.post(
         });
       }
 
-      res.status(500).json({
-        message: "Failed to add product",
-      });
+      res.status(500).json({ message: "Failed to add product" });
     } finally {
       connection.release();
     }
@@ -293,7 +331,7 @@ router.put(
   "/:product_id",
   requireAuth,
   requireAdmin,
-  upload.single("image"),
+  upload.array("images", 8),
   async (req, res) => {
     const connection = await db.getConnection();
 
@@ -310,6 +348,7 @@ router.put(
         description,
         is_active = 1,
         price_breaks,
+        specifications,
       } = req.body;
 
       if (!category_id || !product_name || !slug) {
@@ -320,6 +359,7 @@ router.put(
       }
 
       const parsedPrices = parsePriceBreaks(price_breaks);
+      const parsedSpecs = parseSpecifications(specifications);
 
       if (!parsedPrices.length) {
         await connection.rollback();
@@ -352,10 +392,7 @@ router.put(
       );
 
       await connection.query(
-        `
-        DELETE FROM product_prices
-        WHERE product_id = ?
-        `,
+        `DELETE FROM product_prices WHERE product_id = ?`,
         [product_id]
       );
 
@@ -363,51 +400,52 @@ router.put(
         await connection.query(
           `
           INSERT INTO product_prices
-          (
-            product_id,
-            min_qty,
-            max_qty,
-            price
-          )
+          (product_id, min_qty, max_qty, price)
           VALUES (?, ?, ?, ?)
           `,
           [product_id, price.min_qty, price.max_qty, price.price]
         );
       }
 
-      if (req.file) {
-        const imageUrl = await uploadToSpaces(req.file, "products");
+      await connection.query(
+        `DELETE FROM product_specifications WHERE product_id = ?`,
+        [product_id]
+      );
 
+      for (const spec of parsedSpecs) {
         await connection.query(
           `
-          UPDATE product_images
-          SET is_main = 0
-          WHERE product_id = ?
+          INSERT INTO product_specifications
+          (product_id, spec_name, spec_value, sort_order)
+          VALUES (?, ?, ?, ?)
           `,
+          [product_id, spec.spec_name, spec.spec_value, spec.sort_order]
+        );
+      }
+
+      if (req.files && req.files.length) {
+        await connection.query(
+          `UPDATE product_images SET is_main = 0 WHERE product_id = ?`,
           [product_id]
         );
 
-        await connection.query(
-          `
-          INSERT INTO product_images
-          (
-            product_id,
-            image_url,
-            alt_text,
-            is_main,
-            sort_order
-          )
-          VALUES (?, ?, ?, 1, 0)
-          `,
-          [product_id, imageUrl, product_name]
-        );
+        for (let i = 0; i < req.files.length; i++) {
+          const imageUrl = await uploadToSpaces(req.files[i], "products");
+
+          await connection.query(
+            `
+            INSERT INTO product_images
+            (product_id, image_url, alt_text, is_main, sort_order)
+            VALUES (?, ?, ?, ?, ?)
+            `,
+            [product_id, imageUrl, product_name, i === 0 ? 1 : 0, i]
+          );
+        }
       }
 
       await connection.commit();
 
-      res.json({
-        message: "Product updated successfully",
-      });
+      res.json({ message: "Product updated successfully" });
     } catch (error) {
       await connection.rollback();
       console.error(error);
@@ -418,9 +456,7 @@ router.put(
         });
       }
 
-      res.status(500).json({
-        message: "Failed to update product",
-      });
+      res.status(500).json({ message: "Failed to update product" });
     } finally {
       connection.release();
     }
@@ -428,33 +464,24 @@ router.put(
 );
 
 // DELETE product - soft delete
-router.delete(
-  "/:product_id",
-  requireAuth,
-  requireAdmin,
-  async (req, res) => {
-    try {
-      const { product_id } = req.params;
+router.delete("/:product_id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { product_id } = req.params;
 
-      await db.query(
-        `
-        UPDATE products
-        SET is_active = 0
-        WHERE product_id = ?
-        `,
-        [product_id]
-      );
+    await db.query(
+      `
+      UPDATE products
+      SET is_active = 0
+      WHERE product_id = ?
+      `,
+      [product_id]
+    );
 
-      res.json({
-        message: "Product deleted successfully",
-      });
-    } catch (error) {
-      console.error(error);
-      res.status(500).json({
-        message: "Failed to delete product",
-      });
-    }
+    res.json({ message: "Product deleted successfully" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Failed to delete product" });
   }
-);
+});
 
 module.exports = router;

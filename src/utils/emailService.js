@@ -132,7 +132,7 @@ async function sendOrderRequestEmail({
         </h2>
 
         <p style="margin:0 0 18px;color:#15803d;font-size:16px;font-weight:bold;">
-          Your request has been received and is currently being reviewed.
+          Your order request has been successfully received and is awaiting review by our team.
         </p>
 
         <p style="font-size:15px;line-height:1.6;margin:0 0 20px;">
@@ -199,7 +199,7 @@ async function sendOrderRequestEmail({
 
             <tr>
               <td colspan="4" style="padding:12px;border:1px solid #d9d9d9;text-align:right;font-weight:bold;">
-                Subtotal
+                Estimated Subtotal (Excl. VAT)
               </td>
               <td style="padding:12px;border:1px solid #d9d9d9;text-align:right;font-weight:bold;">
                 £${Number(subtotal || 0).toFixed(2)}
@@ -211,18 +211,26 @@ async function sendOrderRequestEmail({
                 VAT
               </td>
               <td style="padding:12px;border:1px solid #d9d9d9;text-align:right;color:#555;">
-                Calculated at invoice stage
+                To be confirmed on final invoice
               </td>
             </tr>
           </tbody>
         </table>
 
-        <p style="font-size:14px;line-height:1.6;margin:24px 0;">
-          Our team will review your request and contact you once your order has been approved.
+        <p style="font-size:14px;line-height:1.7;margin:24px 0;">
+          <strong>Please Note:</strong> This email confirms receipt of your order request and is not a tax invoice.
+        </p>
+
+        <p style="font-size:14px;line-height:1.7;">
+          Product pricing, VAT, delivery charges and stock availability will be reviewed before your order is approved.
+        </p>
+
+        <p style="font-size:14px;line-height:1.7;">
+          Once reviewed, we will issue an official invoice containing the final order value, VAT where applicable, and payment details.
           <br><br>
-          Thank you for your business.
+          Thank you for choosing SARA Wholesale.
           <br>
-          <strong>SARA Wholesale Supplies Team</strong>
+          <strong>SARA Wholesale Team</strong>
         </p>
 
         <hr style="border:none;border-top:1px solid #ddd;margin:30px 0;">
@@ -252,7 +260,7 @@ async function sendOrderRequestEmail({
   await transporter.sendMail({
     from: process.env.EMAIL_FROM,
     to: email,
-    subject: `Order Request Confirmation - ${orderRequestNumber}`,
+    subject: `Order Request Received - ${orderRequestNumber}`,
     html,
   });
 }

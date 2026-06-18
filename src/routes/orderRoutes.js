@@ -13,6 +13,8 @@ router.get("/my-orders", requireAuth, async (req, res) => {
         o.order_request_id,
         o.order_request_number,
         o.subtotal,
+        o.vat_amount,
+        o.total_amount,
         o.status,
         o.created_at,
         COUNT(oi.order_request_item_id) AS item_count

@@ -189,6 +189,7 @@ router.post("/request-order", requireAuth, async (req, res) => {
       [user_id]
     );
 
+
     if (!cartRows.length) {
       await connection.rollback();
       return res.status(400).json({ message: "Cart is empty" });
@@ -217,10 +218,18 @@ router.post("/request-order", requireAuth, async (req, res) => {
       return res.status(400).json({ message: "Cart is empty" });
     }
 
-    const subtotal = items.reduce((sum, item) => {
-      return sum + Number(item.quantity) * Number(item.unit_price || 0);
-    }, 0);
 
+    const subtotal = Number(
+      items
+        .reduce((sum, item) => {
+          return sum + Number(item.quantity) * Number(item.unit_price || 0);
+        }, 0)
+        .toFixed(2)
+    );
+    
+    const vatAmount = Number((subtotal * 0.2).toFixed(2));
+    const totalAmount = Number((subtotal + vatAmount).toFixed(2));
+    
     const orderRequestNumber = `SOR-${Date.now()}`;
 
     const [orderResult] = await connection.query(
@@ -231,11 +240,13 @@ router.post("/request-order", requireAuth, async (req, res) => {
         user_id,
         cart_id,
         subtotal,
+        vat_amount,
+        total_amount,
         status
       )
-      VALUES (?, ?, ?, ?, 'REQUEST_SUBMITTED')
+      VALUES (?, ?, ?, ?, ?, ?, 'REQUEST_SUBMITTED')
       `,
-      [orderRequestNumber, user_id, cart_id, subtotal]
+      [orderRequestNumber, user_id, cart_id, subtotal, vatAmount, totalAmount]
     );
 
     const order_request_id = orderResult.insertId;
@@ -301,6 +312,8 @@ router.post("/request-order", requireAuth, async (req, res) => {
         customerPhone: user.phone,
         orderRequestNumber,
         subtotal,
+        vatAmount,
+        totalAmount,
         items,
       });
     }
@@ -312,6 +325,8 @@ router.post("/request-order", requireAuth, async (req, res) => {
         customerPhone: user?.phone,
         orderRequestNumber,
         subtotal,
+        vatAmount,
+        totalAmount,
         items,
       });
     }

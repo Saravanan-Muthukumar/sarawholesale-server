@@ -53,6 +53,7 @@ const attachImagesAndSpecs = async (products) => {
     SELECT spec_id, product_id, spec_name, spec_value, sort_order
     FROM product_specifications
     WHERE product_id IN (?)
+    AND is_visible = 1
     ORDER BY product_id, sort_order ASC, spec_id ASC
     `,
     [productIds]

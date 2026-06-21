@@ -13,6 +13,7 @@ const cartRoutes = require("./src/routes/cartRoutes");
 const orderRoutes = require("./src/routes/orderRoutes");
 const contactRoutes = require("./src/routes/contactRoutes");
 const searchRoutes = require("./src/routes/searchRoutes");
+const subscriptionRoutes = require("./src/routes/subscriptionRoutes.js");
 
 const app = express();
 
@@ -54,6 +55,7 @@ app.use("/api/orders", orderRoutes);
 app.use("/uploads", express.static("uploads"));
 app.use("/api/contact", contactRoutes);
 app.use("/api/search", searchRoutes);
+app.use("/api/subscriptions", subscriptionRoutes);
 
 app.use((req, res) => {
   console.log("404 ROUTE NOT FOUND:", req.method, req.originalUrl);

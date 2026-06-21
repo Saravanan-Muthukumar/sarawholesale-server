@@ -31,7 +31,7 @@ router.get("/", async (req, res) => {
       params.push(category, category);
     }
 
-    const [products] = await db.query(
+    let [products] = await db.query(
       `
       SELECT
         p.product_id,
@@ -85,6 +85,38 @@ router.get("/", async (req, res) => {
       `,
       params
     );
+    const productIds = products.map((p) => p.product_id);
+
+if (productIds.length > 0) {
+  const [specRows] = await db.query(
+    `
+    SELECT product_id, spec_name, spec_value, sort_order
+    FROM product_specifications
+    WHERE product_id IN (?)
+    ORDER BY sort_order ASC
+    `,
+    [productIds]
+  );
+
+  const specsByProduct = {};
+
+  specRows.forEach((spec) => {
+    if (!specsByProduct[spec.product_id]) {
+      specsByProduct[spec.product_id] = [];
+    }
+
+    specsByProduct[spec.product_id].push({
+      spec_name: spec.spec_name,
+      spec_value: spec.spec_value,
+      sort_order: spec.sort_order,
+    });
+  });
+
+  products = products.map((product) => ({
+    ...product,
+    specifications: specsByProduct[product.product_id] || [],
+  }));
+}
 
     const [categories] = await db.query(
       `

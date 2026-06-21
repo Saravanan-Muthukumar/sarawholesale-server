@@ -43,13 +43,17 @@ async function getActiveCartItems(user_id) {
       p.product_name,
       p.sku,
       p.slug,
-      pi.image_url
+      pi.image_url,
+      COALESCE(ps.spec_value, 'Unit') AS unit
     FROM carts c
     JOIN cart_items ci ON c.cart_id = ci.cart_id
     JOIN products p ON ci.product_id = p.product_id
     LEFT JOIN product_images pi 
       ON p.product_id = pi.product_id 
       AND pi.is_main = 1
+    LEFT JOIN product_specifications ps
+      ON ps.product_id = p.product_id
+      AND LOWER(TRIM(ps.spec_name)) = 'unit'
     WHERE c.user_id = ?
     AND c.status = 'ACTIVE'
     ORDER BY ci.cart_item_id DESC

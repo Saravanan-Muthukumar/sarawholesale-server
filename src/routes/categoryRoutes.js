@@ -64,7 +64,15 @@ router.post(
   upload.single("image"),
   async (req, res) => {
     try {
-      const { category_name, slug, parent_category_id, is_active = 1 } = req.body;
+      const {
+        category_name,
+        slug,
+        parent_category_id,
+        meta_title,
+        meta_description,
+        seo_content,
+        is_active = 1,
+      } = req.body;
 
       if (!category_name || !slug) {
         return res.status(400).json({
@@ -84,11 +92,14 @@ router.post(
           slug,
           parent_category_id,
           image_url,
+          meta_title,
+          meta_description,
+          seo_content,
           is_active
         )
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `,
-        [category_name, slug, parent_category_id || null, imageUrl, is_active]
+        [category_name, slug, parent_category_id || null, imageUrl, meta_title || null, meta_description || null, seo_content || null,  is_active]
       );
 
       res.status(201).json({
@@ -122,7 +133,7 @@ router.put(
     try {
       const { category_id } = req.params;
 
-      const { category_name, slug, parent_category_id, is_active = 1 } = req.body;
+      const { category_name, slug, parent_category_id, meta_title, meta_description, seo_content, is_active = 1 } = req.body;
 
       if (!category_name || !slug) {
         return res.status(400).json({
@@ -147,6 +158,9 @@ router.put(
             slug = ?,
             parent_category_id = ?,
             image_url = ?,
+            meta_title =?,
+            meta_description=?,
+            seo_content = ?,
             is_active = ?
           WHERE category_id = ?
           `,
@@ -155,6 +169,9 @@ router.put(
             slug,
             parent_category_id || null,
             imageUrl,
+            meta_title || null,
+            meta_description || null,
+            seo_content || null,
             is_active,
             category_id,
           ]
@@ -167,10 +184,14 @@ router.put(
             category_name = ?,
             slug = ?,
             parent_category_id = ?,
+            meta_title = ?,
+            meta_description = ?,
+            seo_content = ?,
             is_active = ?
           WHERE category_id = ?
           `,
-          [category_name, slug, parent_category_id || null, is_active, category_id]
+          [category_name, slug, parent_category_id || null, meta_title || null,
+            meta_description || null, seo_content || null, is_active, category_id]
         );
       }
 

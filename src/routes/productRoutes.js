@@ -227,6 +227,9 @@ router.post(
         product_name,
         slug,
         description,
+        meta_title,
+        meta_description,
+        seo_content,
         is_active = 1,
         price_breaks,
         specifications,
@@ -252,8 +255,8 @@ router.post(
       const [result] = await connection.query(
         `
         INSERT INTO products
-        (category_id, sku, product_name, slug, description, is_active)
-        VALUES (?, ?, ?, ?, ?, ?)
+        (category_id, sku, product_name, slug, description,  meta_title, meta_description, seo_content, is_active)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `,
         [
           category_id,
@@ -261,6 +264,9 @@ router.post(
           product_name,
           slug,
           description || null,
+          meta_title || null,
+          meta_description || null,
+          seo_content || null,
           is_active,
         ]
       );
@@ -347,6 +353,9 @@ router.put(
         product_name,
         slug,
         description,
+        meta_title,
+        meta_description,
+        seo_content,
         is_active = 1,
         price_breaks,
         specifications,
@@ -378,6 +387,9 @@ router.put(
           product_name = ?,
           slug = ?,
           description = ?,
+          meta_title = ?,
+          meta_description = ?,
+          seo_content = ?,
           is_active = ?
         WHERE product_id = ?
         `,
@@ -387,6 +399,9 @@ router.put(
           product_name,
           slug,
           description || null,
+          meta_title || null,
+          meta_description || null,
+          seo_content || null,
           is_active,
           product_id,
         ]

@@ -6,7 +6,7 @@ const db = require("../config/db");
 router.get("/sitemap.xml", async (req, res) => {
   try {
     const smStream = new SitemapStream({
-      hostname: "https://www.sarawholesale.co.uk",
+      hostname: "https://sarawholesale.co.uk",
     });
 
     // Static pages
@@ -15,7 +15,7 @@ router.get("/sitemap.xml", async (req, res) => {
 
     // Categories
     const [categories] = await db.query(`
-      SELECT slug, parent_category_id
+      SELECT slug, parent_category_id, updated_at
       FROM categories
       WHERE is_active = 1
     `);
@@ -25,6 +25,7 @@ router.get("/sitemap.xml", async (req, res) => {
         url: cat.parent_category_id
           ? `/subcategory/${cat.slug}`
           : `/category/${cat.slug}`,
+        lastmod: cat.updated_at || new Date(),
         changefreq: "weekly",
         priority: 0.8,
       });
@@ -50,10 +51,12 @@ router.get("/sitemap.xml", async (req, res) => {
 
     const sitemap = await streamToPromise(smStream);
 
-    res.header("Content-Type", "application/xml");
+    res.setHeader("Content-Type", "application/xml");
+    res.setHeader("Cache-Control", "public, max-age=3600");
+
     res.send(sitemap.toString());
   } catch (error) {
-    console.error(error);
+    console.error("Sitemap Error:", error);
     res.status(500).send("Sitemap Error");
   }
 });

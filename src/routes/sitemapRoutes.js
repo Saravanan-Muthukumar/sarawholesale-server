@@ -6,7 +6,7 @@ const db = require("../config/db");
 router.get("/sitemap.xml", async (req, res) => {
   try {
     const smStream = new SitemapStream({
-      hostname: "https://sarawholesale.co.uk",
+      hostname: "https://www.sarawholesale.co.uk",
     });
 
     // Static pages

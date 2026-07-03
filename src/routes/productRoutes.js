@@ -256,7 +256,7 @@ router.post(
         `
         INSERT INTO products
         (category_id, sku, product_name, slug, description,  meta_title, meta_description, seo_content, is_active)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         [
           category_id,

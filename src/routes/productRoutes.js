@@ -233,6 +233,9 @@ router.post(
         is_active = 1,
         price_breaks,
         specifications,
+        brand,
+        model,
+        size,
       } = req.body;
 
       if (!category_id || !product_name || !slug) {
@@ -255,12 +258,15 @@ router.post(
       const [result] = await connection.query(
         `
         INSERT INTO products
-        (category_id, sku, product_name, slug, description,  meta_title, meta_description, seo_content, is_active)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (category_id, sku, brand, model, size, product_name, slug, description, meta_title, meta_description, seo_content, is_active)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         [
           category_id,
           sku || null,
+          brand || null,
+          model || null,
+          size || null,
           product_name,
           slug,
           description || null,
@@ -268,7 +274,7 @@ router.post(
           meta_description || null,
           seo_content || null,
           is_active,
-        ]
+      ]
       );
 
       const product_id = result.insertId;
@@ -333,6 +339,126 @@ router.post(
   }
 );
 
+//image/main
+router.put(
+  "/image/main",
+  requireAuth,
+  requireAdmin,
+  async (req, res) => {
+    const connection = await db.getConnection();
+
+    try {
+      await connection.beginTransaction();
+
+      const { product_id, image_id } = req.body;
+
+      await connection.query(
+        `UPDATE product_images
+         SET is_main = 0
+         WHERE product_id = ?`,
+        [product_id]
+      );
+
+      await connection.query(
+        `UPDATE product_images
+         SET is_main = 1
+         WHERE product_id = ?
+         AND image_id = ?`,
+        [product_id, image_id]
+      );
+
+      await connection.commit();
+
+      res.json({ message: "Main image updated" });
+    } catch (err) {
+      await connection.rollback();
+      console.error(err);
+      res.status(500).json({ message: "Failed to update main image" });
+    } finally {
+      connection.release();
+    }
+  }
+);
+
+// UPDATE PRODUCT IMAGE ORDER
+router.put(
+  "/image/order",
+  requireAuth,
+  requireAdmin,
+  async (req, res) => {
+    const connection = await db.getConnection();
+
+    try {
+      await connection.beginTransaction();
+
+      const { product_id, images } = req.body;
+
+      if (!product_id || !Array.isArray(images) || images.length === 0) {
+        await connection.rollback();
+        return res.status(400).json({
+          message: "Product ID and images array are required",
+        });
+      }
+
+      for (const image of images) {
+        if (!image.image_id && image.image_id !== 0) {
+          await connection.rollback();
+          return res.status(400).json({
+            message: "Each image must have image_id",
+          });
+        }
+
+        await connection.query(
+          `
+          UPDATE product_images
+          SET sort_order = ?
+          WHERE product_id = ?
+          AND image_id = ?
+          `,
+          [
+            Number(image.sort_order || 0),
+            product_id,
+            image.image_id,
+          ]
+        );
+      }
+
+      await connection.commit();
+
+      res.json({
+        message: "Image order updated successfully",
+      });
+    } catch (error) {
+      await connection.rollback();
+      console.error(error);
+
+      res.status(500).json({
+        message: "Failed to update image order",
+      });
+    } finally {
+      connection.release();
+    }
+  }
+);
+
+//delete image
+router.delete(
+  "/image/:image_id",
+  requireAuth,
+  requireAdmin,
+  async(req,res)=>{
+  
+  const {image_id}=req.params;
+  
+  await db.query(
+  "DELETE FROM product_images WHERE image_id=?",
+  [image_id]
+  );
+  
+  res.json({message:"Image deleted"});
+  
+  });
+
 // EDIT product
 router.put(
   "/:product_id",
@@ -359,6 +485,9 @@ router.put(
         is_active = 1,
         price_breaks,
         specifications,
+        brand,
+        model,
+        size,
       } = req.body;
 
       if (!category_id || !product_name || !slug) {
@@ -381,29 +510,37 @@ router.put(
       await connection.query(
         `
         UPDATE products
-        SET
-          category_id = ?,
-          sku = ?,
-          product_name = ?,
-          slug = ?,
-          description = ?,
-          meta_title = ?,
-          meta_description = ?,
-          seo_content = ?,
-          is_active = ?
-        WHERE product_id = ?
+          SET
+            category_id = ?,
+            sku = ?,
+            brand = ?,
+            model = ?,
+            size = ?,
+            product_name = ?,
+            slug = ?,
+            description = ?,
+            meta_title = ?,
+            meta_description = ?,
+            seo_content = ?,
+            is_active = ?
+          WHERE product_id = ?
         `,
         [
-          category_id,
-          sku || null,
-          product_name,
-          slug,
-          description || null,
-          meta_title || null,
-          meta_description || null,
-          seo_content || null,
-          is_active,
-          product_id,
+          
+            category_id,
+            sku || null,
+            brand || null,
+            model || null,
+            size || null,
+            product_name,
+            slug,
+            description || null,
+            meta_title || null,
+            meta_description || null,
+            seo_content || null,
+            is_active,
+            product_id,
+          
         ]
       );
 
@@ -499,5 +636,8 @@ router.delete("/:product_id", requireAuth, requireAdmin, async (req, res) => {
     res.status(500).json({ message: "Failed to delete product" });
   }
 });
+
+
+
 
 module.exports = router;

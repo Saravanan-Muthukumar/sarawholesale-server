@@ -12,15 +12,15 @@ router.get("/", async (req, res) => {
     if (!q) return res.json({ products: [], categories: [] });
 
     let orderBy = "score DESC, p.product_name ASC";
-
     if (sort === "price_asc") orderBy = "from_price ASC";
     if (sort === "price_desc") orderBy = "from_price DESC";
     if (sort === "name_asc") orderBy = "p.product_name ASC";
 
+    // Setup SQL parameters: We need one 'q' for the SELECT score, 
+    // one for the WHERE clause score, and two for the LIKE conditions.
     const params = [q, q, `%${q}%`, `%${q}%`];
 
     let categoryFilter = "";
-
     if (category) {
       categoryFilter = `
         AND (
@@ -85,39 +85,39 @@ router.get("/", async (req, res) => {
       `,
       params
     );
+
+    // Fetch and append product specifications
     const productIds = products.map((p) => p.product_id);
+    if (productIds.length > 0) {
+      const [specRows] = await db.query(
+        `
+        SELECT product_id, spec_name, spec_value, sort_order
+        FROM product_specifications
+        WHERE product_id IN (?)
+        ORDER BY sort_order ASC
+        `,
+        [productIds]
+      );
 
-if (productIds.length > 0) {
-  const [specRows] = await db.query(
-    `
-    SELECT product_id, spec_name, spec_value, sort_order
-    FROM product_specifications
-    WHERE product_id IN (?)
-    ORDER BY sort_order ASC
-    `,
-    [productIds]
-  );
+      const specsByProduct = {};
+      specRows.forEach((spec) => {
+        if (!specsByProduct[spec.product_id]) {
+          specsByProduct[spec.product_id] = [];
+        }
+        specsByProduct[spec.product_id].push({
+          spec_name: spec.spec_name,
+          spec_value: spec.spec_value,
+          sort_order: spec.sort_order,
+        });
+      });
 
-  const specsByProduct = {};
-
-  specRows.forEach((spec) => {
-    if (!specsByProduct[spec.product_id]) {
-      specsByProduct[spec.product_id] = [];
+      products = products.map((product) => ({
+        ...product,
+        specifications: specsByProduct[product.product_id] || [],
+      }));
     }
 
-    specsByProduct[spec.product_id].push({
-      spec_name: spec.spec_name,
-      spec_value: spec.spec_value,
-      sort_order: spec.sort_order,
-    });
-  });
-
-  products = products.map((product) => ({
-    ...product,
-    specifications: specsByProduct[product.product_id] || [],
-  }));
-}
-
+    // Fetch matching category facet counts
     const [categories] = await db.query(
       `
       SELECT
@@ -147,105 +147,71 @@ if (productIds.length > 0) {
   }
 });
 
+// GET /api/search/keywords?q=ta
+// Consolidates your duplicate endpoints into a single, high-performance clean keyword suggester
 router.get("/keywords", async (req, res) => {
-    try {
-      const q = (req.query.q || "").trim();
-  
-      if (q.length < 2) {
-        return res.json([]);
-      }
-  
-      const like = `%${q}%`;
-  
-      const [rows] = await db.query(
-        `
-        SELECT keyword
-        FROM (
-          /* 1. Category and subcategory first */
-          SELECT DISTINCT
-            c.category_name AS keyword,
-            1 AS priority
-          FROM categories c
-          WHERE c.category_name LIKE ?
-  
-          UNION
-  
-          /* 2. Parent category */
-          SELECT DISTINCT
-            parent.category_name AS keyword,
-            2 AS priority
-          FROM categories child
-          JOIN categories parent
-            ON parent.category_id = child.parent_category_id
-          WHERE parent.category_name LIKE ?
-  
-          UNION
-  
-          /* 3. Clean product names */
-          SELECT DISTINCT
-            TRIM(
-              REGEXP_REPLACE(
-                p.product_name,
-                '([0-9]+(mm|cm|m|inch|")([ ]*)x([ ]*)[0-9]+(mm|cm|m|inch|")?|[0-9]+(mm|cm|m|inch|"))',
-                ''
-              )
-            ) AS keyword,
-            3 AS priority
-          FROM products p
-          WHERE p.is_active = 1
-            AND p.product_name LIKE ?
-        ) AS words
-        WHERE keyword IS NOT NULL
-          AND keyword != ''
-        GROUP BY keyword
-        ORDER BY MIN(priority), keyword ASC
-        LIMIT 12
-        `,
-        [like, like, like]
-      );
-  
-      res.json(rows);
-    } catch (err) {
-      console.error("Keyword search error:", err);
-      res.status(500).json([]);
-    }
-  });
+  try {
+    const q = (req.query.q || "").trim();
 
-  router.get("/keywords", async (req, res) => {
-    try {
-      const q = (req.query.q || "").trim();
-  
-      if (q.length < 2) {
-        return res.json([]);
-      }
-  
-      const like = `%${q}%`;
-  
-      const [rows] = await db.query(
-        `
-        SELECT DISTINCT keyword
-        FROM (
-          SELECT category_name AS keyword
-          FROM categories
-          WHERE category_name LIKE ?
-  
-          UNION
-  
-          SELECT product_name AS keyword
-          FROM products
-          WHERE product_name LIKE ?
-        ) AS search_words
-        WHERE keyword IS NOT NULL
-        ORDER BY keyword ASC
-        LIMIT 10
-        `,
-        [like, like]
-      );
-  
-      res.json(rows);
-    } catch (err) {
-      console.error("Keyword search error:", err);
-      res.status(500).json([]);
+    if (q.length < 2) {
+      return res.json([]);
     }
-  });
+
+    const like = `%${q}%`;
+
+    const [rows] = await db.query(
+      `
+      SELECT keyword, MIN(priority) as main_priority
+      FROM (
+        /* 1. Category matches get highest priority */
+        SELECT DISTINCT
+          c.category_name AS keyword,
+          1 AS priority
+        FROM categories c
+        WHERE c.category_name LIKE ?
+
+        UNION
+
+        /* 2. Parent category name fallback matches */
+        SELECT DISTINCT
+          parent.category_name AS keyword,
+          2 AS priority
+        FROM categories child
+        JOIN categories parent
+          ON parent.category_id = child.parent_category_id
+        WHERE parent.category_name LIKE ?
+
+        UNION
+
+        /* 3. Cleaned up product names (removes measurement details for broader tags) */
+        SELECT DISTINCT
+          TRIM(
+            REGEXP_REPLACE(
+              p.product_name,
+              '([0-9]+(mm|cm|m|inch|")([ ]*)x([ ]*)[0-9]+(mm|cm|m|inch|")?|[0-9]+(mm|cm|m|inch|"))',
+              ''
+            )
+          ) AS keyword,
+          3 AS priority
+        FROM products p
+        WHERE p.is_active = 1
+          AND p.product_name LIKE ?
+      ) AS words
+      WHERE keyword IS NOT NULL 
+        AND keyword != '' 
+        AND CHAR_LENGTH(keyword) > 2
+      GROUP BY keyword
+      ORDER BY main_priority ASC, keyword ASC
+      LIMIT 12
+      `,
+      [like, like, like]
+    );
+
+    res.json(rows);
+  } catch (err) {
+    console.error("Keyword search error:", err);
+    res.status(500).json([]);
+  }
+});
+
 module.exports = router;

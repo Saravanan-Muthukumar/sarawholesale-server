@@ -3,10 +3,12 @@ const router = express.Router();
 const db = require("../config/db");
 const requireAuth = require("../middleware/authMiddleware");
 
+// 1. Fetch all orders for the logged-in user
 router.get("/my-orders", requireAuth, async (req, res) => {
   try {
     const user_id = req.user.user_id;
 
+    // Fixed: Grouping by all non-aggregated columns to comply with ONLY_FULL_GROUP_BY
     const [orders] = await db.query(
       `
       SELECT
@@ -22,7 +24,14 @@ router.get("/my-orders", requireAuth, async (req, res) => {
       LEFT JOIN order_request_items oi
         ON o.order_request_id = oi.order_request_id
       WHERE o.user_id = ?
-      GROUP BY o.order_request_id
+      GROUP BY 
+        o.order_request_id, 
+        o.order_request_number, 
+        o.subtotal, 
+        o.vat_amount, 
+        o.total_amount, 
+        o.status, 
+        o.created_at
       ORDER BY o.created_at DESC
       `,
       [user_id]
@@ -35,7 +44,9 @@ router.get("/my-orders", requireAuth, async (req, res) => {
   }
 });
 
-router.get("/:orderNumber", requireAuth, async (req, res) => {
+// 2. Fetch specific order details by order number
+// Tip: Changed to "/track/:orderNumber" to guarantee it never collides with future static routes like "/summary"
+router.get("/track/:orderNumber", requireAuth, async (req, res) => {
   try {
     const { orderNumber } = req.params;
     const user_id = req.user.user_id;

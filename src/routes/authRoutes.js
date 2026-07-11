@@ -3,6 +3,7 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const db = require("../config/db");
 const crypto = require("crypto");
+const rateLimit = require("express-rate-limit");
 
 const {
   sendVerificationCode,
@@ -15,8 +16,60 @@ const {
 
 const router = express.Router();
 
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+
+  message: {
+    message: "Too many login attempts. Please try again after 15 minutes.",
+  },
+});
+
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+
+  message: {
+    message: "Too many registration attempts. Please try again later.",
+  },
+});
+
+const forgotPasswordLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  limit: 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+
+  message: {
+    message: "Too many password reset requests. Please try again later.",
+  },
+});
+
+const resendCodeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  limit: 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+
+  message: {
+    message: "Too many verification code requests. Please try again later.",
+  },
+});
+
 function generateCode() {
   return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+function normalizeEmail(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
 const createToken = (user) => {
@@ -27,34 +80,69 @@ const createToken = (user) => {
       role: user.role,
     },
     process.env.JWT_SECRET,
-    { expiresIn: "7d" }
+    {
+      expiresIn: "7d",
+      issuer: "sarawholesale",
+      audience: "customer",
+    }
   );
 };
 
 const isProduction = process.env.NODE_ENV === "production";
 
+// Dynamic cookie settings that won't break local development
 const cookieOptions = {
   httpOnly: true,
-  sameSite: "none",
-  secure: true,
+  sameSite: isProduction ? "none" : "lax",
+  secure: isProduction,
   path: "/",
   maxAge: 7 * 24 * 60 * 60 * 1000,
 };
 
-router.post("/register", async (req, res) => {
+router.post("/register", registerLimiter, async (req, res) => {
   try {
-    const {
-      first_name,
-      last_name,
-      business_name,
-      email,
-      phone,
-      password,
-    } = req.body;
+    const first_name = String(req.body.first_name || "").trim();
+    const last_name = String(req.body.last_name || "").trim();
+    const business_name = String(req.body.business_name || "").trim();
+    const email = normalizeEmail(req.body.email);
+    const phone = String(req.body.phone || "").trim();
+    const password = String(req.body.password || "");
 
     if (!first_name || !last_name || !email || !phone || !password) {
       return res.status(400).json({
         message: "Name, email, phone and password are required",
+      });
+    }
+
+    if (!isValidEmail(email)) {
+      return res.status(400).json({
+        message: "Please enter a valid email address",
+      });
+    }
+
+    if (first_name.length > 100 || last_name.length > 100) {
+      return res.status(400).json({
+        message: "Name is too long",
+      });
+    }
+
+    if (business_name.length > 150) {
+      return res.status(400).json({
+        message: "Business name is too long",
+      });
+    }
+
+    const normalizedPhone = phone.replace(/[\s()-]/g, "");
+
+    if (!/^\+?[0-9]{10,15}$/.test(normalizedPhone)) {
+      return res.status(400).json({
+        message: "Please enter a valid phone number",
+      });
+    }
+
+    if (password.length < 8) {
+      return res.status(400).json({
+        message: "Password must be at least 8 characters long",
       });
     }
 
@@ -80,7 +168,7 @@ router.post("/register", async (req, res) => {
           first_name = ?,
           last_name = ?,
           business_name = ?,
-          phone = ?,
+          normalizedPhone = ?,
           password_hash = ?,
           email_verification_code = ?,
           email_verification_expires = DATE_ADD(NOW(), INTERVAL 10 MINUTE)
@@ -90,7 +178,7 @@ router.post("/register", async (req, res) => {
           first_name,
           last_name,
           business_name || null,
-          phone,
+          normalizedPhone,
           password_hash,
           code,
           existing[0].user_id,
@@ -151,7 +239,8 @@ router.post("/register", async (req, res) => {
 
 router.post("/verify-email", async (req, res) => {
   try {
-    const { email, code } = req.body;
+    const {code } = req.body;
+    const email = normalizeEmail(req.body.email);
 
     if (!email || !code) {
       return res.status(400).json({
@@ -221,9 +310,12 @@ router.post("/verify-email", async (req, res) => {
   }
 });
 
-router.post("/resend-code", async (req, res) => {
+router.post(
+  "/resend-code",
+  resendCodeLimiter,
+  async (req, res) => {
   try {
-    const { email } = req.body;
+    const email = normalizeEmail(req.body.email);
 
     if (!email) {
       return res.status(400).json({
@@ -277,11 +369,13 @@ router.post("/resend-code", async (req, res) => {
       message: "Failed to resend verification code",
     });
   }
-});
+}
+);
 
-router.post("/login", async (req, res) => {
+router.post("/login", loginLimiter, async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { password } = req.body;
+    const email = normalizeEmail(req.body.email);
 
     const [rows] = await db.query(
       `
@@ -294,14 +388,15 @@ router.post("/login", async (req, res) => {
       [email]
     );
 
+    // Timing attack mitigation: if user isn't found, check password against a dummy hash
     if (!rows.length) {
+      await bcrypt.compare(password, "$2b$10$NotRealHashToPreventTimingAttacksStandardString");
       return res.status(401).json({
         message: "Invalid email or password",
       });
     }
 
     const user = rows[0];
-
     const isMatch = await bcrypt.compare(password, user.password_hash);
 
     if (!isMatch) {
@@ -320,14 +415,7 @@ router.post("/login", async (req, res) => {
 
     const token = createToken(user);
 
-    console.log("========== LOGIN SUCCESS ==========");
-    console.log("Email:", email);
-    console.log("Origin:", req.headers.origin);
-    console.log("User-Agent:", req.headers["user-agent"]);
-
     res.cookie("token", token, cookieOptions);
-
-    console.log("COOKIE OPTIONS:", cookieOptions);
 
     res.json({
       message: "Login successful",
@@ -351,12 +439,9 @@ router.post("/login", async (req, res) => {
 });
 
 router.get("/test-cookie", (req, res) => {
-  console.log("========== TEST COOKIE ==========");
-  console.log("Cookies:", req.cookies);
-
   res.json({
     cookies: req.cookies,
-    hasToken: !!req.cookies.token,
+    hasToken: !!(req.cookies && req.cookies.token),
   });
 });
 
@@ -370,7 +455,10 @@ router.get("/me", async (req, res) => {
       });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, {
+      issuer: "sarawholesale",
+      audience: "customer",
+    });
 
     const [rows] = await db.query(
       `
@@ -419,8 +507,10 @@ router.put("/change-password", async (req, res) => {
       });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, {
+      issuer: "sarawholesale",
+      audience: "customer",
+    });
     const { current_password, new_password } = req.body;
 
     if (!current_password || !new_password) {
@@ -453,11 +543,7 @@ router.put("/change-password", async (req, res) => {
     }
 
     const user = rows[0];
-
-    const isMatch = await bcrypt.compare(
-      current_password,
-      user.password_hash
-    );
+    const isMatch = await bcrypt.compare(current_password, user.password_hash);
 
     if (!isMatch) {
       return res.status(400).json({
@@ -487,7 +573,7 @@ router.put("/change-password", async (req, res) => {
   }
 });
 
-router.post("/forgot-password", async (req, res) => {
+router.post("/forgot-password", forgotPasswordLimiter, async (req, res) => {
   try {
     const { email } = req.body;
 
@@ -508,6 +594,7 @@ router.post("/forgot-password", async (req, res) => {
       [email]
     );
 
+    // Standard trick: always return success to mask user presence
     if (!users.length) {
       return res.json({
         message: "Password reset email sent. Please check your inbox.",
@@ -515,9 +602,7 @@ router.post("/forgot-password", async (req, res) => {
     }
 
     const user = users[0];
-
     const rawToken = crypto.randomBytes(32).toString("hex");
-
     const hashedToken = crypto
       .createHash("sha256")
       .update(rawToken)
@@ -545,10 +630,7 @@ router.post("/forgot-password", async (req, res) => {
     );
 
     const resetLink = `${process.env.CLIENT_URL}/reset-password/${rawToken}`;
-
-    const customerName = `${user.first_name || ""} ${
-      user.last_name || ""
-    }`.trim();
+    const customerName = `${user.first_name || ""} ${user.last_name || ""}`.trim();
 
     await sendResetPasswordEmail({
       email: user.email,
@@ -565,7 +647,8 @@ router.post("/forgot-password", async (req, res) => {
       message: "Failed to send reset email",
     });
   }
-});
+}
+);
 
 router.post("/reset-password", async (req, res) => {
   try {
@@ -577,9 +660,10 @@ router.post("/reset-password", async (req, res) => {
       });
     }
 
-    if (password.length < 6) {
+    // Fixed mismatch: Increased password validation from 6 to 8 to keep it consistent
+    if (password.length < 8) {
       return res.status(400).json({
-        message: "Password must be at least 6 characters",
+        message: "Password must be at least 8 characters",
       });
     }
 
@@ -606,7 +690,6 @@ router.post("/reset-password", async (req, res) => {
     }
 
     const reset = rows[0];
-
     const password_hash = await bcrypt.hash(password, 10);
 
     await db.query(
@@ -638,13 +721,7 @@ router.post("/reset-password", async (req, res) => {
 });
 
 router.post("/logout", (req, res) => {
-  res.clearCookie("token", {
-    httpOnly: true,
-    sameSite: "none",
-    secure: true,
-    path: "/",
-  });
-
+  res.clearCookie("token", cookieOptions);
   res.json({
     message: "Logged out",
   });

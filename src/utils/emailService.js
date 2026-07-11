@@ -84,6 +84,9 @@ async function sendOrderRequestEmail({
   customerPhone,
   orderRequestNumber,
   subtotal,
+  deliveryCharge,
+  vatAmount,
+  totalAmount,
   items,
 }) {
   const itemHtml = items
@@ -199,20 +202,39 @@ async function sendOrderRequestEmail({
 
             <tr>
               <td colspan="4" style="padding:12px;border:1px solid #d9d9d9;text-align:right;font-weight:bold;">
-                Estimated Subtotal (Excl. VAT)
+                Subtotal
               </td>
-              <td style="padding:12px;border:1px solid #d9d9d9;text-align:right;font-weight:bold;">
+              <td style="padding:12px;border:1px solid #d9d9d9;text-align:right;">
                 £${Number(subtotal || 0).toFixed(2)}
               </td>
             </tr>
 
             <tr>
-              <td colspan="4" style="padding:12px;border:1px solid #d9d9d9;text-align:right;color:#555;">
+              <td colspan="4" style="padding:12px;border:1px solid #d9d9d9;text-align:right;font-weight:bold;">
+                Delivery
+              </td>
+              <td style="padding:12px;border:1px solid #d9d9d9;text-align:right;">
+                ${Number(deliveryCharge || 0) === 0 ? "FREE" : `£${Number(deliveryCharge).toFixed(2)}`}
+              </td>
+            </tr>
+
+            <tr>
+              <td colspan="4" style="padding:12px;border:1px solid #d9d9d9;text-align:right;font-weight:bold;">
                 VAT
               </td>
-              <td style="padding:12px;border:1px solid #d9d9d9;text-align:right;color:#555;">
-                To be confirmed on final invoice
+              <td style="padding:12px;border:1px solid #d9d9d9;text-align:right;">
+                £${Number(vatAmount || 0).toFixed(2)}
               </td>
+            </tr>
+
+            <tr style="background:#f8fafc;">
+              <td colspan="4" style="padding:12px;border:1px solid #d9d9d9;text-align:right;font-weight:bold;font-size:16px;">
+                Total
+              </td>
+              <td style="padding:12px;border:1px solid #d9d9d9;text-align:right;font-weight:bold;font-size:16px;">
+                £${Number(totalAmount || 0).toFixed(2)}
+              </td>
+            </tr>
             </tr>
           </tbody>
         </table>

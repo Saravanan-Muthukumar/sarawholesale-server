@@ -84,6 +84,8 @@ async function sendOrderRequestEmail({
   customerPhone,
   orderRequestNumber,
   subtotal,
+  discountAmount,
+  taxableTotal,
   deliveryCharge,
   vatAmount,
   totalAmount,
@@ -201,41 +203,58 @@ async function sendOrderRequestEmail({
             ${itemHtml}
 
             <tr>
-              <td colspan="4" style="padding:12px;border:1px solid #d9d9d9;text-align:right;font-weight:bold;">
-                Subtotal
-              </td>
-              <td style="padding:12px;border:1px solid #d9d9d9;text-align:right;">
-                £${Number(subtotal || 0).toFixed(2)}
-              </td>
-            </tr>
+  <td colspan="4" style="padding:12px;border:1px solid #d9d9d9;text-align:right;font-weight:bold;">
+    Subtotal
+  </td>
+  <td style="padding:12px;border:1px solid #d9d9d9;text-align:right;">
+    £${Number(subtotal || 0).toFixed(2)}
+  </td>
+</tr>
 
-            <tr>
-              <td colspan="4" style="padding:12px;border:1px solid #d9d9d9;text-align:right;font-weight:bold;">
-                Delivery
-              </td>
-              <td style="padding:12px;border:1px solid #d9d9d9;text-align:right;">
-                ${Number(deliveryCharge || 0) === 0 ? "FREE" : `£${Number(deliveryCharge).toFixed(2)}`}
-              </td>
-            </tr>
+<tr>
+  <td colspan="4" style="padding:12px;border:1px solid #d9d9d9;text-align:right;font-weight:bold;">
+    Voucher Discount
+  </td>
+  <td style="padding:12px;border:1px solid #d9d9d9;text-align:right;color:#15803d;">
+    -£${Number(discountAmount || 0).toFixed(2)}
+  </td>
+</tr>
 
-            <tr>
-              <td colspan="4" style="padding:12px;border:1px solid #d9d9d9;text-align:right;font-weight:bold;">
-                VAT
-              </td>
-              <td style="padding:12px;border:1px solid #d9d9d9;text-align:right;">
-                £${Number(vatAmount || 0).toFixed(2)}
-              </td>
-            </tr>
+<tr>
+  <td colspan="4" style="padding:12px;border:1px solid #d9d9d9;text-align:right;font-weight:bold;">
+    Taxable Total
+  </td>
+  <td style="padding:12px;border:1px solid #d9d9d9;text-align:right;">
+    £${Number(taxableTotal || 0).toFixed(2)}
+  </td>
+</tr>
 
-            <tr style="background:#f8fafc;">
-              <td colspan="4" style="padding:12px;border:1px solid #d9d9d9;text-align:right;font-weight:bold;font-size:16px;">
-                Total
-              </td>
-              <td style="padding:12px;border:1px solid #d9d9d9;text-align:right;font-weight:bold;font-size:16px;">
-                £${Number(totalAmount || 0).toFixed(2)}
-              </td>
-            </tr>
-            </tr>
+<tr>
+  <td colspan="4" style="padding:12px;border:1px solid #d9d9d9;text-align:right;font-weight:bold;">
+    Delivery
+  </td>
+  <td style="padding:12px;border:1px solid #d9d9d9;text-align:right;">
+    ${Number(deliveryCharge || 0) === 0 ? "FREE" : `£${Number(deliveryCharge).toFixed(2)}`}
+  </td>
+</tr>
+
+<tr>
+  <td colspan="4" style="padding:12px;border:1px solid #d9d9d9;text-align:right;font-weight:bold;">
+    VAT
+  </td>
+  <td style="padding:12px;border:1px solid #d9d9d9;text-align:right;">
+    £${Number(vatAmount || 0).toFixed(2)}
+  </td>
+</tr>
+
+<tr style="background:#f8fafc;">
+  <td colspan="4" style="padding:12px;border:1px solid #d9d9d9;text-align:right;font-weight:bold;font-size:16px;">
+    Total
+  </td>
+  <td style="padding:12px;border:1px solid #d9d9d9;text-align:right;font-weight:bold;font-size:16px;">
+    £${Number(totalAmount || 0).toFixed(2)}
+  </td>
+</tr>
           </tbody>
         </table>
 
@@ -407,10 +426,79 @@ async function sendContactAcknowledgementEmail({
   });
 }
 
+// Adjust the import above to match your existing Nodemailer setup.
+
+async function sendSubscriptionVoucherEmail(email, voucherCode) {
+  await transporter.sendMail({
+    from: `"SARA Wholesale" <${process.env.EMAIL_USER}>`,
+    to: email,
+    subject: "Your £10 SARA Wholesale voucher",
+    text: `
+Thank you for subscribing to SARA Wholesale.
+
+Your £10 voucher code is: ${voucherCode}
+
+This voucher can only be used once and is valid for your first order.
+
+Shop at SARA Wholesale.
+    `.trim(),
+
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;color:#222;">
+        <h2 style="margin-bottom:12px;">
+          Thank you for subscribing
+        </h2>
+
+        <p>
+          Here is your £10 SARA Wholesale voucher:
+        </p>
+
+        <div style="
+          margin:20px 0;
+          padding:16px;
+          background:#f4f4f4;
+          border:1px solid #ddd;
+          text-align:center;
+        ">
+          <div style="
+            font-size:12px;
+            color:#666;
+            text-transform:uppercase;
+            letter-spacing:1px;
+          ">
+            Voucher code
+          </div>
+
+          <div style="
+            margin-top:6px;
+            font-size:28px;
+            font-weight:bold;
+            letter-spacing:4px;
+            color:#dc2626;
+          ">
+            ${voucherCode}
+          </div>
+        </div>
+
+        <p style="font-size:13px;color:#666;">
+          One-time use only. Valid on your first order.
+        </p>
+
+        <p>
+          Regards,<br />
+          SARA Wholesale
+        </p>
+      </div>
+    `,
+  });
+}
+
+
 module.exports = {
   sendVerificationCode,
   sendRegistrationSuccess,
   sendOrderRequestEmail,
   sendContactFormEmail,
   sendContactAcknowledgementEmail,
+  sendSubscriptionVoucherEmail,
 };

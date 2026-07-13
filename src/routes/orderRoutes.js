@@ -46,7 +46,7 @@ router.get("/my-orders", requireAuth, async (req, res) => {
 
 // 2. Fetch specific order details by order number
 // Tip: Changed to "/track/:orderNumber" to guarantee it never collides with future static routes like "/summary"
-router.get("/track/:orderNumber", requireAuth, async (req, res) => {
+router.get("/:orderNumber", requireAuth, async (req, res) => {
   try {
     const { orderNumber } = req.params;
     const user_id = req.user.user_id;
@@ -63,14 +63,22 @@ router.get("/track/:orderNumber", requireAuth, async (req, res) => {
     );
 
     if (!orders.length) {
-      return res.status(404).json({ message: "Order not found" });
+      return res.status(404).json({
+        message: "Order not found",
+      });
     }
 
     const order = orders[0];
 
     const [items] = await db.query(
       `
-      SELECT *
+      SELECT
+        order_request_item_id,
+        product_id,
+        product_name,
+        sku,
+        quantity,
+        unit_price
       FROM order_request_items
       WHERE order_request_id = ?
       ORDER BY order_request_item_id ASC
@@ -78,13 +86,16 @@ router.get("/track/:orderNumber", requireAuth, async (req, res) => {
       [order.order_request_id]
     );
 
-    res.json({
+    return res.json({
       order,
       items,
     });
   } catch (error) {
     console.error("Get order details error:", error);
-    res.status(500).json({ message: "Failed to load order details" });
+
+    return res.status(500).json({
+      message: "Failed to load order details",
+    });
   }
 });
 

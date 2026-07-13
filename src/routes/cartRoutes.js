@@ -35,6 +35,8 @@ const orderRequestLimiter = rateLimit({
   },
 });
 
+
+
 /*
 |--------------------------------------------------------------------------
 | Validation helpers
@@ -98,6 +100,8 @@ async function getActiveCartItems(userId) {
   const [rows] = await db.query(
     `
     SELECT
+      c.voucher_code,
+      c.discount_percent,
       ci.cart_item_id,
       ci.cart_id,
       ci.product_id,
@@ -297,7 +301,11 @@ router.get("/", requireAuth, async (req, res) => {
   try {
     const rows = await getActiveCartItems(req.user.user_id);
 
-    return res.status(200).json(rows);
+    return res.status(200).json({
+      items: rows,
+      voucher_code: rows[0]?.voucher_code || "",
+      discount_percent: Number(rows[0]?.discount_percent || 0),
+    });
   } catch (error) {
     console.error("Get cart error:", error);
 
@@ -361,6 +369,8 @@ router.put(
       const [cartItemRows] = await db.query(
         `
         SELECT
+          c.voucher_code,
+          c.discount_percent,
           ci.cart_item_id,
           ci.product_id,
           p.stock_qty,
@@ -526,7 +536,10 @@ router.post(
        */
       const [cartRows] = await connection.query(
         `
-        SELECT cart_id
+        SELECT
+          cart_id,
+          voucher_code,
+          discount_percent
         FROM carts
         WHERE user_id = ?
           AND status = 'ACTIVE'
@@ -659,42 +672,81 @@ router.post(
         });
       }
 
-      const deliveryCharge = subtotal >= 40 ? 0 : 5.95;
-      const vatAmount = Number((subtotal * 0.2).toFixed(2));
+      const discountPercent = Number(cartRows[0].discount_percent || 0);
 
-      const totalAmount = Number(
-        (subtotal + deliveryCharge + vatAmount).toFixed(2)
-      );
+        const discountAmount = Number(
+          (subtotal * discountPercent / 100).toFixed(2)
+        );
+
+        const taxableTotal = Number(
+          (subtotal - discountAmount).toFixed(2)
+        );
+
+        const deliveryCharge = taxableTotal >= 40 ? 0 : 5.95;
+
+        const vatAmount = Number(
+          (taxableTotal * 0.2).toFixed(2)
+        );
+
+        const totalAmount = Number(
+          (taxableTotal + vatAmount + deliveryCharge).toFixed(2)
+        );
 
       const orderRequestNumber = `SOR-${Date.now()}`;
 
       const [orderResult] = await connection.query(
         `
         INSERT INTO order_requests
-        (
-          order_request_number,
-          user_id,
-          cart_id,
-          subtotal,
-          delivery_charge,
-          vat_amount,
-          total_amount,
-          status
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'REQUEST_SUBMITTED')
+          (
+            order_request_number,
+            user_id,
+            cart_id,
+            subtotal,
+            taxable_total,
+            delivery_charge,
+            vat_amount,
+            total_amount,
+            voucher_code,
+            discount_percent,
+            discount_amount,
+            status
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'REQUEST_SUBMITTED')
         `,
         [
           orderRequestNumber,
           userId,
           cartId,
           subtotal,
+          taxableTotal,
           deliveryCharge,
           vatAmount,
           totalAmount,
+          cartRows[0].voucher_code,
+          discountPercent,
+          discountAmount,
         ]
       );
 
       const orderRequestId = orderResult.insertId;
+      if (cartRows[0].voucher_code) {
+      
+        // Mark voucher as redeemed
+        await connection.query(
+          `
+          UPDATE subscriptions
+          SET redeemed_order_id = ?
+          WHERE LOWER(email) = LOWER(?)
+            AND UPPER(offer_code) = UPPER(?)
+            AND redeemed_order_id IS NULL
+          `,
+          [
+            orderRequestId,
+            req.user.email,
+            cartRows[0].voucher_code,
+          ]
+        );
+      }
 
       for (const item of pricedItems) {
         await connection.query(
@@ -793,6 +845,8 @@ router.post(
               customerPhone: user.phone,
               orderRequestNumber,
               subtotal,
+              discountAmount,
+              taxableTotal,
               deliveryCharge,
               vatAmount,
               totalAmount,
@@ -809,6 +863,8 @@ router.post(
               customerPhone: user?.phone,
               orderRequestNumber,
               subtotal,
+              discountAmount,
+              taxableTotal,
               deliveryCharge,
               vatAmount,
               totalAmount,
@@ -830,11 +886,11 @@ router.post(
 
       return res.status(201).json({
         success: true,
-        message: "Order request submitted",
         order_request_id: orderRequestId,
         order_request_number: orderRequestNumber,
-        status: "REQUEST_SUBMITTED",
         subtotal,
+        discount_amount: discountAmount,
+        taxable_total: taxableTotal,
         delivery_charge: deliveryCharge,
         vat_amount: vatAmount,
         total_amount: totalAmount,
@@ -868,4 +924,88 @@ router.post(
   }
 );
 
+router.post("/redeem-voucher",requireAuth, async (req, res) => {
+  try {
+    const voucherCode = String(req.body.voucherCode || "")
+      .trim()
+      .toUpperCase();
+
+    if (!voucherCode) {
+      return res.status(400).json({
+        message: "Please enter a voucher code.",
+      });
+    }
+
+    const userEmail = req.user?.email;
+
+    if (!userEmail) {
+      return res.status(401).json({
+        message: "Please log in to redeem this voucher.",
+      });
+    }
+
+    const [subscriptions] = await db.query(
+      `
+        SELECT subscription_id, offer_code, redeemed_order_id
+        FROM subscriptions
+        WHERE LOWER(email) = LOWER(?)
+          AND UPPER(offer_code) = UPPER(?)
+        LIMIT 1
+      `,
+      [userEmail, voucherCode]
+    );
+
+    if (!subscriptions.length) {
+      return res.status(400).json({
+        message: "This voucher is not valid for your email address.",
+      });
+    }
+
+    const subscription = subscriptions[0];
+
+    if (subscription.redeemed_order_id) {
+      return res.status(400).json({
+        message: "This voucher has already been used.",
+      });
+    }
+
+    const [carts] = await db.query(
+      `
+        SELECT cart_id
+        FROM carts
+        WHERE user_id = ?
+        AND status = 'ACTIVE'
+        LIMIT 1
+      `,
+      [req.user.user_id]
+    );
+
+    if (!carts.length) {
+      return res.status(404).json({
+        message: "Cart not found.",
+      });
+    }
+
+    await db.query(
+      `
+        UPDATE carts
+        SET voucher_code = ?,
+            discount_percent = ?
+        WHERE cart_id = ?
+      `,
+      [voucherCode, 10, carts[0].cart_id]
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Voucher applied successfully.",
+    });
+  } catch (error) {
+    console.error("Redeem voucher error:", error);
+
+    return res.status(500).json({
+      message: "Unable to redeem voucher. Please try again.",
+    });
+  }
+});
 module.exports = router;

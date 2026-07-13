@@ -5,65 +5,55 @@ const db = require("../config/db");
 // POST /api/subscriptions
 router.post("/", async (req, res) => {
   try {
-    const email = (req.body.email || "").trim().toLowerCase();
+    const email = String(req.body.email || "")
+      .trim()
+      .toLowerCase();
 
     if (!email) {
       return res.status(400).json({
-        success: false,
-        message: "Email is required",
+        message: "Please enter your email address.",
       });
     }
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-    if (!emailRegex.test(email)) {
+    if (!emailPattern.test(email)) {
       return res.status(400).json({
-        success: false,
-        message: "Please enter a valid email address",
+        message: "Please enter a valid email address.",
       });
     }
 
-    const offerCode = "VOUCHER5";
-    const offerDetails = "£5 voucher for subscribing to offers and updates";
-
-    const [existing] = await db.query(
-      "SELECT subscription_id FROM subscriptions WHERE email = ?",
+    // Insert only when this email does not already exist.
+    await db.query(
+      `
+        INSERT IGNORE INTO subscriptions (
+          email,
+          created_at
+        )
+        VALUES (?, NOW())
+      `,
       [email]
     );
 
-    if (existing.length > 0) {
-      return res.status(409).json({
-        success: false,
-        message: "This email is already subscribed",
-      });
+    // Send the email every time the form is submitted.
+    try {
+      await sendSubscriptionEmail(email);
+    } catch (emailError) {
+      console.error("Subscription email error:", emailError);
     }
 
-    const [result] = await db.query(
-      `
-      INSERT INTO subscriptions
-      (
-        email,
-        offer_code,
-        offer_details
-      )
-      VALUES (?, ?, ?)
-      `,
-      [email, offerCode, offerDetails]
-    );
-
-    res.status(201).json({
+    // Always return success for valid email addresses.
+    return res.status(200).json({
       success: true,
-      message: "Thank you for subscribing",
-      subscriptionId: result.insertId,
-      offerCode,
-      offerDetails,
+      message:
+        "Thank you for subscribing. Please check your email for your voucher.",
     });
-  } catch (err) {
-    console.error("Subscription error:", err);
+  } catch (error) {
+    console.error("Subscription error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: "Subscription failed",
+      message: "Unable to subscribe. Please try again.",
     });
   }
 });

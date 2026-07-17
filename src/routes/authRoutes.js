@@ -18,7 +18,7 @@ const router = express.Router();
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 5,
+  limit: 100,
   standardHeaders: true,
   legacyHeaders: false,
 
@@ -726,5 +726,6 @@ router.post("/logout", (req, res) => {
     message: "Logged out",
   });
 });
+
 
 module.exports = router;

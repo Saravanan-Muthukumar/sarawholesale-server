@@ -15,7 +15,6 @@ const contactRoutes = require("./src/routes/contactRoutes");
 const searchRoutes = require("./src/routes/searchRoutes");
 const subscriptionRoutes = require("./src/routes/subscriptionRoutes.js");
 const sitemapRoutes = require("./src/routes/sitemapRoutes");
-const paymentRoutes = require("./src/routes/paymentRoutes");
 
 
 const app = express();
@@ -60,7 +59,6 @@ app.use("/api/contact", contactRoutes);
 app.use("/api/search", searchRoutes);
 app.use("/api/subscriptions", subscriptionRoutes);
 app.use("/", sitemapRoutes);
-app.use("/api/payments", paymentRoutes);
 
 app.use((req, res) => {
   console.log("404 ROUTE NOT FOUND:", req.method, req.originalUrl);

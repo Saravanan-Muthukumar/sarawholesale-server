@@ -15,7 +15,7 @@ const { sendOrderRequestEmail } = require("../utils/emailService");
 
 const cartWriteLimiter = rateLimit({
   windowMs: 60 * 1000,
-  limit: 100,
+  limit: 30,
   standardHeaders: "draft-8",
   legacyHeaders: false,
   message: {

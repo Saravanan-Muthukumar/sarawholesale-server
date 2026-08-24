@@ -104,26 +104,33 @@ async function getActiveCartItems(userId) {
       c.discount_percent,
       ci.cart_item_id,
       ci.cart_id,
-      ci.product_id,
+      ci.variant_id,
+      pv.product_id,
       ci.quantity,
       ci.unit_price,
       ROUND(ci.quantity * ci.unit_price, 2) AS line_total,
-      p.product_name,
-      p.sku,
-      p.slug,
-      p.stock_qty,
+      pm.product_name,
+      pv.sku,
+      pv.variant_1,
+      pv.variant_1_value,
+      pv.variant_2,
+      pv.variant_2_value,
+      pm.slug,
+      pv.stock_qty,
       pi.image_url,
       COALESCE(ps.spec_value, 'Unit') AS unit
     FROM carts c
     JOIN cart_items ci
       ON c.cart_id = ci.cart_id
-    JOIN products p
-      ON ci.product_id = p.product_id
-    LEFT JOIN product_images pi
-      ON p.product_id = pi.product_id
-      AND pi.is_main = 1
-    LEFT JOIN product_specifications ps
-      ON ps.product_id = p.product_id
+      JOIN product_variants pv
+      ON ci.variant_id = pv.variant_id
+    
+    JOIN product_main pm
+      ON pv.product_id = pm.product_id
+      LEFT JOIN product_main_images pi
+      ON pm.product_id = pi.product_id
+    LEFT JOIN product_main_specs ps
+      ON ps.product_id = pm.product_id
       AND LOWER(TRIM(ps.spec_name)) = 'unit'
     WHERE c.user_id = ?
       AND c.status = 'ACTIVE'
@@ -144,7 +151,7 @@ async function getActiveCartItems(userId) {
 |--------------------------------------------------------------------------
 */
 
-async function getProductUnitPrice(queryRunner, productId, quantity) {
+async function getVariantUnitPrice(queryRunner, variantId, quantity) {
   const [priceRows] = await queryRunner.query(
     `
     SELECT price
@@ -155,7 +162,7 @@ async function getProductUnitPrice(queryRunner, productId, quantity) {
     ORDER BY min_qty DESC
     LIMIT 1
     `,
-    [productId, quantity, quantity]
+    [variantId, quantity, quantity]
   );
 
   if (!priceRows.length) {
@@ -183,13 +190,13 @@ router.post(
   cartWriteLimiter,
   async (req, res) => {
     try {
-      const productId = parsePositiveInteger(req.body.product_id);
+      const variantId = parsePositiveInteger(req.body.variant_id);
       const quantity = parsePositiveInteger(req.body.quantity ?? 1);
 
-      if (!productId) {
+      if (!variantId) {
         return res.status(400).json({
           success: false,
-          message: "A valid product ID is required",
+          message: "A valid variant ID is required",
         });
       }
 
@@ -205,12 +212,14 @@ router.post(
 
       const [productRows] = await db.query(
         `
-        SELECT product_id, product_name, stock_qty
-        FROM products
-        WHERE product_id = ?
+        SELECT pv.product_id, pm.product_name, pv.stock_qty
+        FROM product_variants pv
+        JOIN product_main pm
+        ON pm.product_id = pv.product_id
+        WHERE pv.variant_id = ?
         LIMIT 1
         `,
-        [productId]
+        [variantId]
       );
 
       if (!productRows.length) {
@@ -228,10 +237,10 @@ router.post(
         SELECT cart_item_id, quantity
         FROM cart_items
         WHERE cart_id = ?
-          AND product_id = ?
+        AND variant_id = ?
         LIMIT 1
         `,
-        [cartId, productId]
+        [cartId, variantId]
       );
 
       const existingQty = Number(existingRows[0]?.quantity || 0);
@@ -241,16 +250,16 @@ router.post(
         return res.status(409).json({
           success: false,
           message: `Only ${stockQty} available in stock`,
-          product_id: productId,
+          product_id: product.product_id,
           stock_qty: stockQty,
           quantity_in_cart: existingQty,
           available_to_add: Math.max(stockQty - existingQty, 0),
         });
       }
 
-      const unitPrice = await getProductUnitPrice(
+      const unitPrice = await getVariantUnitPrice(
         db,
-        productId,
+        variantId,
         requestedTotalQty
       );
 
@@ -264,19 +273,19 @@ router.post(
       await db.query(
         `
         INSERT INTO cart_items
-          (cart_id, product_id, quantity, unit_price)
+        (cart_id, variant_id, quantity, unit_price)
         VALUES (?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           quantity = quantity + VALUES(quantity),
           unit_price = VALUES(unit_price)
         `,
-        [cartId, productId, quantity, unitPrice]
+        [cartId, variantId, quantity, unitPrice]
       );
 
       return res.status(201).json({
         success: true,
         message: "Item added to cart",
-        product_id: productId,
+        variant_id: variantId,
         quantity: requestedTotalQty,
         unit_price: unitPrice,
       });
@@ -372,14 +381,16 @@ router.put(
           c.voucher_code,
           c.discount_percent,
           ci.cart_item_id,
-          ci.product_id,
-          p.stock_qty,
-          p.product_name
+          ci.variant_id,
+          pv.stock_qty,
+          pm.product_name
         FROM cart_items ci
         JOIN carts c
           ON ci.cart_id = c.cart_id
-        JOIN products p
-          ON ci.product_id = p.product_id
+          JOIN product_variants pv
+          ON ci.variant_id = pv.variant_id
+          JOIN product_main pm
+          ON pv.product_id = pm.product_id
         WHERE ci.cart_item_id = ?
           AND c.user_id = ?
           AND c.status = 'ACTIVE'
@@ -407,9 +418,9 @@ router.put(
         });
       }
 
-      const unitPrice = await getProductUnitPrice(
+      const unitPrice = await getVariantUnitPrice(
         db,
-        cartItem.product_id,
+        cartItem.variant_id,
         quantity
       );
 
@@ -568,11 +579,11 @@ router.post(
         `
         SELECT
           ci.cart_item_id,
-          ci.product_id,
+          ci.variant_id,
           ci.quantity,
-          p.product_name,
-          p.sku,
-          p.stock_qty
+          pm.product_name,
+          pv.sku,
+          pm.stock_qty
         FROM cart_items ci
         JOIN products p
           ON ci.product_id = p.product_id

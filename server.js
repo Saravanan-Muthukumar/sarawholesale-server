@@ -15,6 +15,7 @@ const contactRoutes = require("./src/routes/contactRoutes");
 const searchRoutes = require("./src/routes/searchRoutes");
 const subscriptionRoutes = require("./src/routes/subscriptionRoutes.js");
 const sitemapRoutes = require("./src/routes/sitemapRoutes");
+const productMainRoutes = require("./src/routes/productMainRoutes");
 
 
 const app = express();
@@ -58,6 +59,7 @@ app.use("/uploads", express.static("uploads"));
 app.use("/api/contact", contactRoutes);
 app.use("/api/search", searchRoutes);
 app.use("/api/subscriptions", subscriptionRoutes);
+app.use("/api/product-main", productMainRoutes);
 app.use("/", sitemapRoutes);
 
 app.use((req, res) => {

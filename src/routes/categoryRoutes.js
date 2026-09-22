@@ -13,7 +13,9 @@ const upload = multer({
 
 // GET active categories - public
 router.get("/", async (req, res) => {
+  console.log("➡️ GET /api/categories called");
   try {
+    console.log("⏳ Starting categories DB query...");
     const [rows] = await db.query(`
       SELECT
         c.*,
@@ -24,9 +26,10 @@ router.get("/", async (req, res) => {
       WHERE c.is_active = 1
       ORDER BY c.category_name
     `);
-
+    console.log(`✅ Categories DB query completed. ${rows.length} rows found`);
     res.json(rows);
   } catch (error) {
+    console.error("❌ Categories API error:", error);
     res.status(500).json({
       success: false,
       message: error.message,

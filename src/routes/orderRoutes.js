@@ -75,10 +75,16 @@ router.get("/:orderNumber", requireAuth, async (req, res) => {
       SELECT
         order_request_item_id,
         product_id,
+        variant_id,
         product_name,
         sku,
+        variant_1,
+        variant_1_value,
+        variant_2,
+        variant_2_value,
         quantity,
-        unit_price
+        unit_price,
+        line_total
       FROM order_request_items
       WHERE order_request_id = ?
       ORDER BY order_request_item_id ASC

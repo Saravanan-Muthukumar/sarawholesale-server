@@ -117,8 +117,8 @@ async function getActiveCartItems(userId) {
       pv.variant_2_value,
       pm.slug,
       pv.stock_qty,
-      pi.image_url,
-      COALESCE(ps.spec_value, 'Unit') AS unit
+      (SELECT image_url FROM product_main_images WHERE product_id = pm.product_id ORDER BY is_primary DESC, sort_order ASC, image_id ASC LIMIT 1) AS image_url,
+      COALESCE((SELECT spec_value FROM product_main_specs WHERE product_id = pm.product_id AND LOWER(TRIM(spec_name)) = 'unit' ORDER BY sort_order ASC LIMIT 1), 'Unit') AS unit
     FROM carts c
     JOIN cart_items ci
       ON c.cart_id = ci.cart_id
@@ -127,11 +127,6 @@ async function getActiveCartItems(userId) {
     
     JOIN product_main pm
       ON pv.product_id = pm.product_id
-      LEFT JOIN product_main_images pi
-      ON pm.product_id = pi.product_id
-    LEFT JOIN product_main_specs ps
-      ON ps.product_id = pm.product_id
-      AND LOWER(TRIM(ps.spec_name)) = 'unit'
     WHERE c.user_id = ?
       AND c.status = 'ACTIVE'
     ORDER BY ci.cart_item_id DESC
@@ -147,36 +142,93 @@ async function getActiveCartItems(userId) {
 | Secure price calculation
 |--------------------------------------------------------------------------
 | Never trust unit_price sent by the frontend.
-| The server selects the correct tier price from product_prices.
+| The server selects the correct tier price from product_variants.
 |--------------------------------------------------------------------------
 */
 
 async function getVariantUnitPrice(queryRunner, variantId, quantity) {
-  const [priceRows] = await queryRunner.query(
-    `
-    SELECT price
-    FROM product_prices
-    WHERE product_id = ?
-      AND min_qty <= ?
-      AND (max_qty IS NULL OR max_qty >= ?)
-    ORDER BY min_qty DESC
+  const [rows] = await queryRunner.query(`
+    SELECT tier_1_qty, tier_1_price,
+           tier_2_qty, tier_2_price,
+           tier_3_qty, tier_3_price,
+           tier_4_qty, tier_4_price
+    FROM product_variants
+    WHERE variant_id = ? AND is_active = 1
     LIMIT 1
-    `,
-    [variantId, quantity, quantity]
-  );
+  `, [variantId]);
 
-  if (!priceRows.length) {
-    return null;
+  if (!rows.length) return null;
+  let chosen = null;
+  for (let i = 1; i <= 4; i++) {
+    const minQty = Number(rows[0][`tier_${i}_qty`]);
+    const rawPrice = rows[0][`tier_${i}_price`];
+    const price = Number(rawPrice);
+    if (rawPrice != null && Number.isInteger(minQty) && minQty > 0 &&
+        Number.isFinite(price) && price >= 0 && quantity >= minQty &&
+        (chosen === null || minQty > chosen.minQty)) {
+      chosen = { minQty, price };
+    }
   }
-
-  const price = Number(priceRows[0].price);
-
-  if (!Number.isFinite(price) || price < 0) {
-    return null;
-  }
-
-  return Number(price.toFixed(2));
+  return chosen ? Number(chosen.price.toFixed(2)) : null;
 }
+
+// Public, read-only lookup for guest carts. No prices are accepted from the browser.
+router.post("/guest-details", cartWriteLimiter, async (req, res) => {
+  try {
+    const input = req.body?.items;
+    if (!Array.isArray(input) || input.length > 50) {
+      return res.status(400).json({ success: false, message: "Invalid cart items" });
+    }
+    const quantities = new Map();
+    for (const item of input) {
+      const id = parsePositiveInteger(item?.variant_id);
+      const qty = parsePositiveInteger(item?.quantity);
+      if (!id || !qty || qty > 100000) {
+        return res.status(400).json({ success: false, message: "Invalid variant or quantity" });
+      }
+      quantities.set(id, (quantities.get(id) || 0) + qty);
+      if (quantities.get(id) > 100000) {
+        return res.status(400).json({ success: false, message: "Quantity too large" });
+      }
+    }
+    if (!quantities.size) return res.json({ items: [] });
+
+    const ids = [...quantities.keys()];
+    const placeholders = ids.map(() => "?").join(",");
+    const [rows] = await db.query(`
+      SELECT pv.variant_id, pv.product_id, pv.sku,
+             pv.variant_1, pv.variant_1_value, pv.variant_2, pv.variant_2_value,
+             pv.stock_qty, pm.product_name, pm.slug,
+             (SELECT image_url FROM product_main_images
+              WHERE product_id = pm.product_id
+              ORDER BY is_primary DESC, sort_order ASC, image_id ASC LIMIT 1) AS image_url,
+             COALESCE((SELECT spec_value FROM product_main_specs
+              WHERE product_id = pm.product_id AND LOWER(TRIM(spec_name)) = 'unit'
+              ORDER BY sort_order ASC LIMIT 1), 'Unit') AS unit
+      FROM product_variants pv
+      JOIN product_main pm ON pm.product_id = pv.product_id
+      WHERE pv.variant_id IN (${placeholders})
+        AND pv.is_active = 1 AND pm.is_active = 1
+    `, ids);
+
+    const items = await Promise.all(rows.map(async (row) => {
+      const quantity = quantities.get(Number(row.variant_id));
+      const unitPrice = await getVariantUnitPrice(db, row.variant_id, quantity);
+      return {
+        ...row,
+        cart_item_id: row.variant_id,
+        quantity,
+        unit_price: unitPrice,
+        line_total: unitPrice === null ? null : Number((quantity * unitPrice).toFixed(2)),
+        available: quantity <= Number(row.stock_qty) && unitPrice !== null,
+      };
+    }));
+    return res.json({ items });
+  } catch (error) {
+    console.error("Guest cart details error:", error);
+    return res.status(500).json({ success: false, message: "Failed to load guest cart" });
+  }
+});
 
 /*
 |--------------------------------------------------------------------------
@@ -583,10 +635,17 @@ router.post(
           ci.quantity,
           pm.product_name,
           pv.sku,
-          pm.stock_qty
+          pv.product_id,
+          pv.stock_qty,
+          pv.variant_1,
+          pv.variant_1_value,
+          pv.variant_2,
+          pv.variant_2_value
         FROM cart_items ci
-        JOIN products p
-          ON ci.product_id = p.product_id
+        JOIN product_variants pv
+          ON pv.variant_id = ci.variant_id
+        JOIN product_main pm
+          ON pm.product_id = pv.product_id
         WHERE ci.cart_id = ?
         FOR UPDATE
         `,
@@ -636,9 +695,9 @@ router.post(
          * Recalculate every price at checkout.
          * This prevents stale or manipulated prices.
          */
-        const unitPrice = await getProductUnitPrice(
+        const unitPrice = await getVariantUnitPrice(
           connection,
-          item.product_id,
+          item.variant_id,
           quantity
         );
 
@@ -766,19 +825,29 @@ router.post(
           (
             order_request_id,
             product_id,
+            variant_id,
             product_name,
             sku,
+            variant_1,
+            variant_1_value,
+            variant_2,
+            variant_2_value,
             quantity,
             unit_price,
             line_total
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `,
           [
             orderRequestId,
             item.product_id,
+            item.variant_id,
             item.product_name,
             item.sku,
+            item.variant_1 ?? null,
+            item.variant_1_value ?? null,
+            item.variant_2 ?? null,
+            item.variant_2_value ?? null,
             item.quantity,
             item.unit_price,
             item.line_total,
@@ -791,12 +860,12 @@ router.post(
          */
         const [stockUpdateResult] = await connection.query(
           `
-          UPDATE products
+          UPDATE product_variants
           SET stock_qty = stock_qty - ?
-          WHERE product_id = ?
+          WHERE variant_id = ?
             AND stock_qty >= ?
           `,
-          [item.quantity, item.product_id, item.quantity]
+          [item.quantity, item.variant_id, item.quantity]
         );
 
         if (stockUpdateResult.affectedRows === 0) {
@@ -884,12 +953,20 @@ router.post(
           );
         }
 
-        const emailResults = await Promise.allSettled(emailJobs);
-
-        emailResults.forEach((result) => {
-          if (result.status === "rejected") {
-            console.error("Order request email error:", result.reason);
-          }
+        // Send emails without blocking the order response
+        void Promise.allSettled(emailJobs)
+        .then((results) => {
+          results.forEach((result) => {
+            if (result.status === "rejected") {
+              console.error(
+                "Order request email error:",
+                result.reason
+              );
+            }
+          });
+        })
+        .catch((error) => {
+          console.error("Email processing error:", error);
         });
       } catch (emailError) {
         console.error("Order email processing error:", emailError);

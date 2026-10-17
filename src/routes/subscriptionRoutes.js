@@ -28,9 +28,11 @@ router.post("/", async (req, res) => {
       `
         INSERT IGNORE INTO subscriptions (
           email,
+          offer_code,
+          offer_details,
           created_at
         )
-        VALUES (?, NOW())
+        VALUES (?, 'SW010', '10% discount', NOW())
       `,
       [email]
     );
